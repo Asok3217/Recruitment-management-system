@@ -1,6 +1,7 @@
+
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -14,25 +15,16 @@ import {
   Save,
   ShieldCheck,
   Sun,
+  Trash2,
   Upload,
   User,
-  X,
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
 
-const MAX_FILE_SIZE = 2 * 1024 * 1024;
-
 const PROFILE_BUCKET = "profile picture";
 const RESUME_BUCKET = "resumes";
-
-const ALLOWED_IMAGE_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-];
-
-const ALLOWED_RESUME_TYPES = ["application/pdf"];
+const MAX_FILE_SIZE = 2 * 1024 * 1024;
 
 type Profile = {
   id: string;
@@ -44,386 +36,585 @@ type Profile = {
   is_active: boolean | null;
 };
 
+type MessageType = "success" | "error" | "";
+
 export default function CandidateProfilePage() {
   const supabase = createClient();
 
   const [profile, setProfile] = useState<Profile | null>(null);
 
   const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
 
-  const [avatarUrl, setAvatarUrl] = useState("");
-  const [resumeUrl, setResumeUrl] = useState("");
-
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const [selectedResume, setSelectedResume] = useState<File | null>(null);
-
-  const [imagePreview, setImagePreview] = useState("");
-  const [resumeName, setResumeName] = useState("");
+  const [profileImageUrl, setProfileImageUrl] = useState<string | null>(
+    null,
+  );
+  const [resumeUrl, setResumeUrl] = useState<string | null>(null);
+  const [resumeName, setResumeName] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadingResume, setUploadingResume] = useState(false);
+  const [deletingImage, setDeletingImage] = useState(false);
+  const [deletingResume, setDeletingResume] = useState(false);
+
+  const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState<MessageType>("");
 
   const [darkMode, setDarkMode] = useState(false);
 
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
   useEffect(() => {
-    let mounted = true;
+    loadProfile();
+  }, []);
 
-    async function loadProfile() {
-      setLoading(true);
-      setError("");
+  function showMessage(type: Exclude<MessageType, "">, text: string) {
+    setMessageType(type);
+    setMessage(text);
+  }
 
+  function clearMessage() {
+    setMessage("");
+    setMessageType("");
+  }
+
+  async function loadProfile() {
+    setLoading(true);
+    clearMessage();
+
+    try {
       const {
         data: { user },
+        error: userError,
       } = await supabase.auth.getUser();
 
+      if (userError) {
+        throw userError;
+      }
+
       if (!user) {
-        if (mounted) {
-          setError("You must be logged in to view your profile.");
-          setLoading(false);
-        }
+        window.location.href = "/auth/login";
         return;
       }
 
-      const { data, error: profileError } = await supabase
+      const { data, error } = await supabase
         .from("profiles")
         .select(
-          "id, full_name, email, phone, avatar_url, role, is_active"
+          "id, full_name, email, phone, avatar_url, role, is_active",
         )
         .eq("id", user.id)
         .single();
 
-      if (profileError) {
-        console.error(profileError);
-
-        if (mounted) {
-          setError("Unable to load your profile.");
-          setLoading(false);
-        }
-
-        return;
+      if (error) {
+        throw error;
       }
 
-      if (!mounted) return;
+      if (!data) {
+        throw new Error("Candidate profile could not be found.");
+      }
+
+      if (data.role !== "candidate") {
+        throw new Error("Only candidate accounts can access this page.");
+      }
 
       const profileData = data as Profile;
 
       setProfile(profileData);
       setFullName(profileData.full_name ?? "");
-      setEmail(profileData.email ?? user.email ?? "");
       setPhone(profileData.phone ?? "");
-      setAvatarUrl(profileData.avatar_url ?? "");
+      setProfileImageUrl(profileData.avatar_url ?? null);
 
+      await loadResume(user.id);
+    } catch (error) {
+      console.error("Profile loading error:", error);
+
+      showMessage(
+        "error",
+        error instanceof Error
+          ? error.message
+          : "Unable to load your profile.",
+      );
+    } finally {
       setLoading(false);
     }
-
-    loadProfile();
-
-    return () => {
-      mounted = false;
-    };
-  }, [supabase]);
-
-  function clearMessages() {
-    setError("");
-    setSuccess("");
   }
 
-  function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
-    clearMessages();
+  async function loadResume(userId: string) {
+    const { data, error } = await supabase.storage
+      .from(RESUME_BUCKET)
+      .list(userId, {
+        limit: 20,
+        sortBy: {
+          column: "created_at",
+          order: "desc",
+        },
+      });
 
+    if (error) {
+      console.error("Resume listing error:", error);
+
+      // A missing/empty folder should not prevent the profile page
+      // from loading.
+      setResumeUrl(null);
+      setResumeName(null);
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      setResumeUrl(null);
+      setResumeName(null);
+      return;
+    }
+
+    const resumeFile = data.find(
+      (file) => file.name && !file.name.endsWith("/"),
+    );
+
+    if (!resumeFile) {
+      setResumeUrl(null);
+      setResumeName(null);
+      return;
+    }
+
+    const filePath = `${userId}/${resumeFile.name}`;
+
+    const { data: publicData } = supabase.storage
+      .from(RESUME_BUCKET)
+      .getPublicUrl(filePath);
+
+    setResumeUrl(publicData.publicUrl);
+    setResumeName(resumeFile.name);
+  }
+
+  async function saveProfile() {
+    if (!profile) return;
+
+    clearMessage();
+
+    const trimmedName = fullName.trim();
+    const trimmedPhone = phone.trim();
+
+    if (!trimmedName) {
+      showMessage("error", "Full name is required.");
+      return;
+    }
+
+    setSavingProfile(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .update({
+          full_name: trimmedName,
+          phone: trimmedPhone || null,
+        })
+        .eq("id", profile.id)
+        .select(
+          "id, full_name, email, phone, avatar_url, role, is_active",
+        )
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      if (data) {
+        setProfile(data as Profile);
+      }
+
+      showMessage("success", "Profile details saved successfully.");
+    } catch (error) {
+      console.error("Profile save error:", error);
+
+      showMessage(
+        "error",
+        error instanceof Error
+          ? error.message
+          : "Unable to save your profile.",
+      );
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  function validateFile(
+    file: File,
+    type: "image" | "resume",
+  ): boolean {
+    if (file.size > MAX_FILE_SIZE) {
+      showMessage(
+        "error",
+        `${type === "image" ? "Profile picture" : "Resume"} must be 2 MB or smaller.`,
+      );
+      return false;
+    }
+
+    if (type === "image") {
+      if (!file.type.startsWith("image/")) {
+        showMessage(
+          "error",
+          "Please select a valid image file.",
+        );
+        return false;
+      }
+
+      return true;
+    }
+
+    const allowedTypes = [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ];
+
+    const extension = file.name
+      .split(".")
+      .pop()
+      ?.toLowerCase();
+
+    const validExtension = ["pdf", "doc", "docx"].includes(
+      extension ?? "",
+    );
+
+    if (!allowedTypes.includes(file.type) && !validExtension) {
+      showMessage(
+        "error",
+        "Resume must be a PDF, DOC, or DOCX file.",
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  function getFileExtension(file: File) {
+    const extension = file.name.split(".").pop()?.toLowerCase();
+
+    if (!extension) {
+      return "bin";
+    }
+
+    return extension.replace(/[^a-z0-9]/g, "");
+  }
+
+  async function handleProfileImageChange(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
     const file = event.target.files?.[0];
 
-    if (!file) return;
+    // Allow selecting the same file again.
+    event.target.value = "";
 
-    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-      setError("Please select a JPG, PNG, or WebP image.");
-      event.target.value = "";
+    if (!file || !profile) return;
+
+    clearMessage();
+
+    if (!validateFile(file, "image")) {
       return;
-    }
-
-    if (file.size > MAX_FILE_SIZE) {
-      setError("Profile picture must be 2 MB or less.");
-      event.target.value = "";
-      return;
-    }
-
-    setSelectedImage(file);
-
-    const previewUrl = URL.createObjectURL(file);
-
-    setImagePreview(previewUrl);
-  }
-
-  function handleResumeChange(event: ChangeEvent<HTMLInputElement>) {
-    clearMessages();
-
-    const file = event.target.files?.[0];
-
-    if (!file) return;
-
-    if (!ALLOWED_RESUME_TYPES.includes(file.type)) {
-      setError("Please upload your resume as a PDF.");
-      event.target.value = "";
-      return;
-    }
-
-    if (file.size > MAX_FILE_SIZE) {
-      setError("Resume must be 2 MB or less.");
-      event.target.value = "";
-      return;
-    }
-
-    setSelectedResume(file);
-    setResumeName(file.name);
-  }
-
-  async function uploadProfilePicture(userId: string) {
-    if (!selectedImage) {
-      return avatarUrl;
-    }
-
-    if (selectedImage.size > MAX_FILE_SIZE) {
-      throw new Error("Profile picture must be 2 MB or less.");
-    }
-
-    if (!ALLOWED_IMAGE_TYPES.includes(selectedImage.type)) {
-      throw new Error("Please select a JPG, PNG, or WebP image.");
     }
 
     setUploadingImage(true);
 
     try {
-      const extension =
-        selectedImage.type === "image/png"
-          ? "png"
-          : selectedImage.type === "image/webp"
-            ? "webp"
-            : "jpg";
+      const extension = getFileExtension(file);
 
-      const filePath = `${userId}/profile-picture-${Date.now()}.${extension}`;
+      const filePath = `${profile.id}/profile-picture.${extension}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from(PROFILE_BUCKET)
-        .upload(filePath, selectedImage, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: selectedImage.type,
-        });
+      // Remove existing profile-picture files first.
+      const { data: existingFiles, error: listError } =
+        await supabase.storage.from(PROFILE_BUCKET).list(profile.id);
 
-      if (uploadError) {
-        console.error(uploadError);
-        throw new Error(
-          `Unable to upload profile picture: ${uploadError.message}`
-        );
+      if (listError) {
+        throw listError;
       }
 
-      const {
-        data: { publicUrl },
-      } = supabase.storage
-        .from(PROFILE_BUCKET)
-        .getPublicUrl(filePath);
+      if (existingFiles && existingFiles.length > 0) {
+        const oldFiles = existingFiles
+          .filter((item) => item.name)
+          .map((item) => `${profile.id}/${item.name}`);
 
-      return publicUrl;
-    } finally {
-      setUploadingImage(false);
-    }
-  }
+        if (oldFiles.length > 0) {
+          const { error: removeError } = await supabase.storage
+            .from(PROFILE_BUCKET)
+            .remove(oldFiles);
 
-  async function uploadResume(userId: string) {
-    if (!selectedResume) {
-      return resumeUrl;
-    }
-
-    if (selectedResume.size > MAX_FILE_SIZE) {
-      throw new Error("Resume must be 2 MB or less.");
-    }
-
-    if (!ALLOWED_RESUME_TYPES.includes(selectedResume.type)) {
-      throw new Error("Please upload your resume as a PDF.");
-    }
-
-    setUploadingResume(true);
-
-    try {
-      const safeFileName = selectedResume.name
-        .replace(/[^a-zA-Z0-9._-]/g, "-")
-        .replace(/-+/g, "-");
-
-      const filePath = `${userId}/resume-${Date.now()}-${safeFileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from(RESUME_BUCKET)
-        .upload(filePath, selectedResume, {
-          cacheControl: "3600",
-          upsert: false,
-          contentType: "application/pdf",
-        });
-
-      if (uploadError) {
-        console.error(uploadError);
-        throw new Error(
-          `Unable to upload resume: ${uploadError.message}`
-        );
-      }
-
-      const {
-        data: { publicUrl },
-      } = supabase.storage
-        .from(RESUME_BUCKET)
-        .getPublicUrl(filePath);
-
-      return publicUrl;
-    } finally {
-      setUploadingResume(false);
-    }
-  }
-
-  async function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    clearMessages();
-    setSaving(true);
-
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setError("Your session has expired. Please sign in again.");
-        return;
-      }
-
-      if (!fullName.trim()) {
-        setError("Full name is required.");
-        return;
-      }
-
-      if (selectedImage && selectedImage.size > MAX_FILE_SIZE) {
-        setError("Profile picture must be 2 MB or less.");
-        return;
-      }
-
-      if (selectedResume && selectedResume.size > MAX_FILE_SIZE) {
-        setError("Resume must be 2 MB or less.");
-        return;
-      }
-
-      let newAvatarUrl = avatarUrl;
-      let newResumeUrl = resumeUrl;
-
-      if (selectedImage) {
-        newAvatarUrl = await uploadProfilePicture(user.id);
-      }
-
-      if (selectedResume) {
-        newResumeUrl = await uploadResume(user.id);
-      }
-
-      const { error: updateError } = await supabase
-        .from("profiles")
-        .update({
-          full_name: fullName.trim(),
-          phone: phone.trim() || null,
-          avatar_url: newAvatarUrl || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", user.id);
-
-      if (updateError) {
-        console.error(updateError);
-        throw new Error(
-          `Unable to save profile: ${updateError.message}`
-        );
-      }
-
-      if (selectedResume) {
-        const { data: existingApplication } = await supabase
-          .from("applications")
-          .select("id")
-          .eq("candidate_id", user.id)
-          .order("applied_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (existingApplication) {
-          const { error: applicationUpdateError } = await supabase
-            .from("applications")
-            .update({
-              resume_url: newResumeUrl || null,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", existingApplication.id);
-
-          if (applicationUpdateError) {
-            console.warn(
-              "Resume uploaded, but application resume could not be updated:",
-              applicationUpdateError
-            );
+          if (removeError) {
+            throw removeError;
           }
         }
       }
 
-      setAvatarUrl(newAvatarUrl);
-      setResumeUrl(newResumeUrl);
+      const { error: uploadError } = await supabase.storage
+        .from(PROFILE_BUCKET)
+        .upload(filePath, file, {
+          contentType: file.type,
+          upsert: false,
+          cacheControl: "3600",
+        });
 
-      setSelectedImage(null);
-      setSelectedResume(null);
-
-      if (newResumeUrl && !resumeName) {
-        setResumeName("Resume uploaded");
+      if (uploadError) {
+        throw uploadError;
       }
 
-      setSuccess("Profile updated successfully.");
+      const { data: publicData } = supabase.storage
+        .from(PROFILE_BUCKET)
+        .getPublicUrl(filePath);
+
+      const publicUrl = `${publicData.publicUrl}?v=${Date.now()}`;
+
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({
+          avatar_url: publicUrl,
+        })
+        .eq("id", profile.id);
+
+      if (updateError) {
+        // If the database update fails, clean up the uploaded file.
+        await supabase.storage
+          .from(PROFILE_BUCKET)
+          .remove([filePath]);
+
+        throw updateError;
+      }
+
+      setProfileImageUrl(publicUrl);
 
       setProfile((current) =>
         current
           ? {
               ...current,
-              full_name: fullName.trim(),
-              phone: phone.trim() || null,
-              avatar_url: newAvatarUrl || null,
+              avatar_url: publicUrl,
             }
-          : current
+          : current,
       );
-    } catch (caughtError) {
-      console.error(caughtError);
 
-      const message =
-        caughtError instanceof Error
-          ? caughtError.message
-          : "Something went wrong while updating your profile.";
+      showMessage(
+        "success",
+        "Profile picture uploaded successfully.",
+      );
+    } catch (error) {
+      console.error("Profile picture upload error:", error);
 
-      setError(message);
+      showMessage(
+        "error",
+        error instanceof Error
+          ? error.message
+          : "Unable to upload profile picture.",
+      );
     } finally {
-      setSaving(false);
       setUploadingImage(false);
+    }
+  }
+
+  async function deleteProfileImage() {
+    if (!profile || !profileImageUrl) return;
+
+    clearMessage();
+    setDeletingImage(true);
+
+    try {
+      const { data: files, error: listError } = await supabase.storage
+        .from(PROFILE_BUCKET)
+        .list(profile.id);
+
+      if (listError) {
+        throw listError;
+      }
+
+      if (files && files.length > 0) {
+        const paths = files
+          .filter((file) => file.name)
+          .map((file) => `${profile.id}/${file.name}`);
+
+        if (paths.length > 0) {
+          const { error: deleteError } = await supabase.storage
+            .from(PROFILE_BUCKET)
+            .remove(paths);
+
+          if (deleteError) {
+            throw deleteError;
+          }
+        }
+      }
+
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({
+          avatar_url: null,
+        })
+        .eq("id", profile.id);
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      setProfileImageUrl(null);
+
+      setProfile((current) =>
+        current
+          ? {
+              ...current,
+              avatar_url: null,
+            }
+          : current,
+      );
+
+      showMessage(
+        "success",
+        "Profile picture removed successfully.",
+      );
+    } catch (error) {
+      console.error("Profile picture deletion error:", error);
+
+      showMessage(
+        "error",
+        error instanceof Error
+          ? error.message
+          : "Unable to remove profile picture.",
+      );
+    } finally {
+      setDeletingImage(false);
+    }
+  }
+
+  async function handleResumeChange(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0];
+
+    event.target.value = "";
+
+    if (!file || !profile) return;
+
+    clearMessage();
+
+    if (!validateFile(file, "resume")) {
+      return;
+    }
+
+    setUploadingResume(true);
+
+    try {
+      // Remove existing resume files first so only one resume
+      // is associated with the candidate.
+      const { data: existingFiles, error: listError } =
+        await supabase.storage.from(RESUME_BUCKET).list(profile.id);
+
+      if (listError) {
+        throw listError;
+      }
+
+      if (existingFiles && existingFiles.length > 0) {
+        const oldFiles = existingFiles
+          .filter((item) => item.name)
+          .map((item) => `${profile.id}/${item.name}`);
+
+        if (oldFiles.length > 0) {
+          const { error: removeError } = await supabase.storage
+            .from(RESUME_BUCKET)
+            .remove(oldFiles);
+
+          if (removeError) {
+            throw removeError;
+          }
+        }
+      }
+
+      const extension = getFileExtension(file);
+
+      const filePath = `${profile.id}/resume.${extension}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from(RESUME_BUCKET)
+        .upload(filePath, file, {
+          contentType: file.type,
+          upsert: false,
+          cacheControl: "3600",
+        });
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      const { data: publicData } = supabase.storage
+        .from(RESUME_BUCKET)
+        .getPublicUrl(filePath);
+
+      const publicUrl = `${publicData.publicUrl}?v=${Date.now()}`;
+
+      setResumeUrl(publicUrl);
+      setResumeName(file.name);
+
+      showMessage(
+        "success",
+        "Resume uploaded successfully.",
+      );
+    } catch (error) {
+      console.error("Resume upload error:", error);
+
+      showMessage(
+        "error",
+        error instanceof Error
+          ? error.message
+          : "Unable to upload resume.",
+      );
+    } finally {
       setUploadingResume(false);
     }
   }
 
-  function removeSelectedImage() {
-    setSelectedImage(null);
-    setImagePreview("");
+  async function deleteResume() {
+    if (!profile || !resumeName) return;
 
-    clearMessages();
+    clearMessage();
+    setDeletingResume(true);
+
+    try {
+      const { data: files, error: listError } = await supabase.storage
+        .from(RESUME_BUCKET)
+        .list(profile.id);
+
+      if (listError) {
+        throw listError;
+      }
+
+      if (files && files.length > 0) {
+        const paths = files
+          .filter((file) => file.name)
+          .map((file) => `${profile.id}/${file.name}`);
+
+        if (paths.length > 0) {
+          const { error: deleteError } = await supabase.storage
+            .from(RESUME_BUCKET)
+            .remove(paths);
+
+          if (deleteError) {
+            throw deleteError;
+          }
+        }
+      }
+
+      setResumeUrl(null);
+      setResumeName(null);
+
+      showMessage(
+        "success",
+        "Resume removed successfully.",
+      );
+    } catch (error) {
+      console.error("Resume deletion error:", error);
+
+      showMessage(
+        "error",
+        error instanceof Error
+          ? error.message
+          : "Unable to remove resume.",
+      );
+    } finally {
+      setDeletingResume(false);
+    }
   }
-
-  function removeSelectedResume() {
-    setSelectedResume(null);
-    setResumeName("");
-
-    clearMessages();
-  }
-
-  const displayedAvatar = imagePreview || avatarUrl;
 
   if (loading) {
     return (
@@ -442,18 +633,12 @@ export default function CandidateProfilePage() {
           }`}
         >
           <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
-            <Link
-              href="/candidate/dashboard"
-              className="flex items-center gap-2.5"
-            >
+            <div className="flex items-center gap-2.5">
               <div className="flex size-9 items-center justify-center rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900">
                 <BriefcaseBusiness size={18} />
               </div>
-
-              <span className="text-sm font-bold sm:text-base">
-                RMS
-              </span>
-            </Link>
+              <span className="text-sm font-bold">RMS</span>
+            </div>
 
             <button
               type="button"
@@ -471,13 +656,11 @@ export default function CandidateProfilePage() {
         </header>
 
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
-          <div className="animate-pulse">
-            <div className="h-8 w-48 rounded-lg bg-slate-200 dark:bg-white/10" />
+          <div className="h-8 w-48 animate-pulse rounded-lg bg-slate-200 dark:bg-white/10" />
 
-            <div className="mt-8 grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-              <div className="h-80 rounded-3xl bg-slate-200 dark:bg-white/10" />
-              <div className="h-[600px] rounded-3xl bg-slate-200 dark:bg-white/10" />
-            </div>
+          <div className="mt-6 grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+            <div className="h-80 animate-pulse rounded-3xl bg-slate-200 dark:bg-white/10" />
+            <div className="h-[600px] animate-pulse rounded-3xl bg-slate-200 dark:bg-white/10" />
           </div>
         </div>
       </main>
@@ -487,7 +670,7 @@ export default function CandidateProfilePage() {
   if (!profile) {
     return (
       <main
-        className={`min-h-dvh flex items-center justify-center px-4 ${
+        className={`flex min-h-dvh items-center justify-center px-4 ${
           darkMode
             ? "bg-[#070a10] text-white"
             : "bg-[#f4f7fb] text-slate-900"
@@ -501,12 +684,12 @@ export default function CandidateProfilePage() {
           }`}
         >
           <User
-            size={36}
+            size={34}
             className="mx-auto text-slate-400"
           />
 
           <h1 className="mt-5 text-xl font-bold">
-            Profile unavailable
+            Unable to load profile
           </h1>
 
           <p
@@ -514,15 +697,15 @@ export default function CandidateProfilePage() {
               darkMode ? "text-slate-400" : "text-slate-600"
             }`}
           >
-            {error || "Unable to load your profile."}
+            {message || "Your candidate profile could not be loaded."}
           </p>
 
           <Link
             href="/candidate/dashboard"
-            className="mt-6 inline-flex h-11 items-center gap-2 rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
+            className="mt-6 inline-flex h-11 items-center gap-2 rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900"
           >
             <ArrowLeft size={16} />
-            Dashboard
+            Back to dashboard
           </Link>
         </div>
       </main>
@@ -537,12 +720,14 @@ export default function CandidateProfilePage() {
           : "bg-[#f4f7fb] text-slate-900"
       }`}
     >
+      {/* Background */}
       <div
         className={`pointer-events-none fixed left-1/2 top-0 -z-0 h-[420px] w-[650px] -translate-x-1/2 rounded-full blur-3xl ${
           darkMode ? "bg-cyan-950/20" : "bg-cyan-100/50"
         }`}
       />
 
+      {/* Header */}
       <header
         className={`sticky top-0 z-30 border-b backdrop-blur-xl ${
           darkMode
@@ -570,7 +755,7 @@ export default function CandidateProfilePage() {
               className={`hidden h-10 items-center gap-2 rounded-xl px-3 text-sm font-medium sm:flex ${
                 darkMode
                   ? "text-slate-300 hover:bg-white/10 hover:text-white"
-                  : "text-slate-700 hover:bg-slate-100"
+                  : "text-slate-700 hover:bg-slate-100 hover:text-slate-950"
               }`}
             >
               <ArrowLeft size={16} />
@@ -587,12 +772,17 @@ export default function CandidateProfilePage() {
               }`}
               aria-label="Toggle theme"
             >
-              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+              {darkMode ? (
+                <Sun size={18} />
+              ) : (
+                <Moon size={18} />
+              )}
             </button>
           </div>
         </div>
       </header>
 
+      {/* Content */}
       <div className="relative z-10 mx-auto max-w-6xl px-4 py-6 pb-12 sm:px-6 sm:py-8 lg:px-8">
         <div className="mb-6">
           <Link
@@ -616,55 +806,48 @@ export default function CandidateProfilePage() {
               darkMode ? "text-slate-400" : "text-slate-600"
             }`}
           >
-            Keep your personal information and application documents up
-            to date.
+            Manage your personal information, profile picture, and resume.
           </p>
         </div>
 
-        {(error || success) && (
+        {/* Message */}
+        {message && (
           <div
-            className={`mb-6 rounded-2xl border px-4 py-3 text-sm font-medium ${
-              error
+            className={`mb-6 flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm font-medium ${
+              messageType === "error"
                 ? "border-red-500/20 bg-red-500/10 text-red-700 dark:text-red-400"
                 : "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
             }`}
           >
-            <div className="flex items-start gap-2">
-              {error ? (
-                <X size={17} className="mt-0.5 shrink-0" />
-              ) : (
-                <CheckCircle2
-                  size={17}
-                  className="mt-0.5 shrink-0"
-                />
-              )}
-
-              <span>{error || success}</span>
-            </div>
+            <CheckCircle2
+              size={18}
+              className="mt-0.5 shrink-0"
+            />
+            <span>{message}</span>
           </div>
         )}
 
         <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
           {/* Profile card */}
-          <aside
-            className={`h-fit rounded-3xl border p-6 shadow-sm ${
-              darkMode
-                ? "border-white/10 bg-white/[0.04]"
-                : "border-slate-200 bg-white"
-            }`}
-          >
-            <div className="flex flex-col items-center text-center">
-              <div className="relative">
+          <aside className="space-y-6">
+            <section
+              className={`rounded-3xl border p-6 shadow-sm ${
+                darkMode
+                  ? "border-white/10 bg-white/[0.04]"
+                  : "border-slate-200 bg-white"
+              }`}
+            >
+              <div className="text-center">
                 <div
-                  className={`flex size-32 items-center justify-center overflow-hidden rounded-full border-4 shadow-lg ${
+                  className={`relative mx-auto flex size-32 items-center justify-center overflow-hidden rounded-full border-4 shadow-sm ${
                     darkMode
                       ? "border-white/10 bg-white/10"
                       : "border-white bg-slate-100"
                   }`}
                 >
-                  {displayedAvatar ? (
+                  {profileImageUrl ? (
                     <img
-                      src={displayedAvatar}
+                      src={profileImageUrl}
                       alt={fullName || "Profile picture"}
                       className="size-full object-cover"
                     />
@@ -680,104 +863,137 @@ export default function CandidateProfilePage() {
                   )}
                 </div>
 
-                <label
-                  className={`absolute bottom-1 right-1 flex size-10 cursor-pointer items-center justify-center rounded-full border shadow-lg transition ${
+                <h2 className="mt-4 break-words text-lg font-bold">
+                  {fullName || "Candidate"}
+                </h2>
+
+                <p
+                  className={`mt-1 flex items-center justify-center gap-1.5 text-sm ${
                     darkMode
-                      ? "border-white/10 bg-white text-slate-900 hover:bg-slate-200"
-                      : "border-slate-200 bg-slate-900 text-white hover:bg-slate-800"
+                      ? "text-slate-400"
+                      : "text-slate-500"
                   }`}
-                  title="Upload profile picture"
                 >
-                  <Upload size={17} />
+                  <Mail size={14} />
+                  <span className="max-w-[210px] truncate">
+                    {profile.email || "No email"}
+                  </span>
+                </p>
+
+                <label
+                  className={`mt-5 flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border text-sm font-semibold transition ${
+                    darkMode
+                      ? "border-white/10 bg-white/[0.05] text-white hover:bg-white/10"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  } ${
+                    uploadingImage
+                      ? "pointer-events-none opacity-60"
+                      : ""
+                  }`}
+                >
+                  {uploadingImage ? (
+                    <Loader2
+                      size={16}
+                      className="animate-spin"
+                    />
+                  ) : (
+                    <Upload size={16} />
+                  )}
+
+                  {uploadingImage
+                    ? "Uploading..."
+                    : profileImageUrl
+                      ? "Replace picture"
+                      : "Upload picture"}
 
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={handleImageChange}
+                    accept="image/*"
                     className="hidden"
+                    onChange={handleProfileImageChange}
+                    disabled={uploadingImage}
                   />
                 </label>
-              </div>
 
-              {selectedImage && (
-                <button
-                  type="button"
-                  onClick={removeSelectedImage}
-                  className="mt-3 text-xs font-medium text-red-500 hover:text-red-600"
+                {profileImageUrl && (
+                  <button
+                    type="button"
+                    onClick={deleteProfileImage}
+                    disabled={deletingImage}
+                    className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-xl text-sm font-medium text-red-600 transition hover:bg-red-500/10 disabled:opacity-50"
+                  >
+                    {deletingImage ? (
+                      <Loader2
+                        size={15}
+                        className="animate-spin"
+                      />
+                    ) : (
+                      <Trash2 size={15} />
+                    )}
+
+                    {deletingImage
+                      ? "Removing..."
+                      : "Remove picture"}
+                  </button>
+                )}
+
+                <p
+                  className={`mt-4 text-[11px] leading-5 ${
+                    darkMode
+                      ? "text-slate-500"
+                      : "text-slate-500"
+                  }`}
                 >
-                  Remove selected picture
-                </button>
-              )}
+                  JPG, PNG, WEBP or another image format.
+                  Maximum size: 2 MB.
+                </p>
+              </div>
+            </section>
 
-              <h2 className="mt-5 max-w-full truncate text-lg font-bold">
-                {fullName || "Your name"}
-              </h2>
+            {/* Security */}
+            <section
+              className={`rounded-3xl border p-5 ${
+                darkMode
+                  ? "border-cyan-400/10 bg-cyan-400/[0.04]"
+                  : "border-cyan-200 bg-cyan-50"
+              }`}
+            >
+              <div className="flex gap-3">
+                <ShieldCheck
+                  size={20}
+                  className="shrink-0 text-cyan-700 dark:text-cyan-400"
+                />
 
-              <p
-                className={`mt-1 flex items-center gap-1.5 text-sm ${
-                  darkMode ? "text-slate-400" : "text-slate-500"
-                }`}
-              >
-                <Mail size={14} />
-                <span className="max-w-[190px] truncate">
-                  {email}
-                </span>
-              </p>
+                <div>
+                  <h3 className="text-sm font-semibold">
+                    Profile security
+                  </h3>
 
-              <span
-                className={`mt-4 rounded-full px-3 py-1 text-xs font-semibold capitalize ${
-                  darkMode
-                    ? "bg-cyan-400/10 text-cyan-300"
-                    : "bg-cyan-50 text-cyan-700"
-                }`}
-              >
-                {profile.role}
-              </span>
-
-              <div
-                className={`mt-6 w-full rounded-2xl border p-4 text-left ${
-                  darkMode
-                    ? "border-white/10 bg-white/[0.03]"
-                    : "border-slate-200 bg-slate-50"
-                }`}
-              >
-                <div className="flex gap-3">
-                  <ShieldCheck
-                    size={18}
-                    className="mt-0.5 shrink-0 text-cyan-600"
-                  />
-
-                  <div>
-                    <p className="text-xs font-semibold">
-                      Profile security
-                    </p>
-
-                    <p
-                      className={`mt-1 text-[11px] leading-5 ${
-                        darkMode
-                          ? "text-slate-400"
-                          : "text-slate-500"
-                      }`}
-                    >
-                      Your profile information is protected by your
-                      account permissions.
-                    </p>
-                  </div>
+                  <p
+                    className={`mt-1 text-xs leading-5 ${
+                      darkMode
+                        ? "text-slate-400"
+                        : "text-slate-600"
+                    }`}
+                  >
+                    Your profile information is securely stored
+                    and only available to authorized users.
+                  </p>
                 </div>
               </div>
-            </div>
+            </section>
           </aside>
 
-          {/* Main form */}
-          <form
-            onSubmit={handleSaveProfile}
-            className={`min-w-0 rounded-3xl border p-5 shadow-sm sm:p-7 ${
-              darkMode
-                ? "border-white/10 bg-white/[0.04]"
-                : "border-slate-200 bg-white"
-            }`}
-          >
-            <div className="flex flex-col gap-3 border-b pb-6 sm:flex-row sm:items-center sm:justify-between">
+          {/* Main */}
+          <div className="min-w-0 space-y-6">
+            {/* Personal details */}
+            <section
+              className={`rounded-3xl border p-5 shadow-sm sm:p-7 ${
+                darkMode
+                  ? "border-white/10 bg-white/[0.04]"
+                  : "border-slate-200 bg-white"
+              }`}
+            >
               <div>
                 <h2 className="text-lg font-bold">
                   Personal information
@@ -790,415 +1006,420 @@ export default function CandidateProfilePage() {
                       : "text-slate-500"
                   }`}
                 >
-                  Update the information recruiters can see.
+                  Keep your candidate information up to date.
                 </p>
               </div>
 
-              <button
-                type="submit"
-                disabled={
-                  saving ||
-                  uploadingImage ||
-                  uploadingResume
-                }
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white shadow-lg transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
-              >
-                {saving ? (
-                  <>
+              <div className="mt-6 grid gap-5 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="fullName"
+                    className="mb-2 block text-sm font-semibold"
+                  >
+                    Full name
+                  </label>
+
+                  <div className="relative">
+                    <User
+                      size={17}
+                      className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${
+                        darkMode
+                          ? "text-slate-400"
+                          : "text-slate-500"
+                      }`}
+                    />
+
+                    <input
+                      id="fullName"
+                      type="text"
+                      value={fullName}
+                      onChange={(event) =>
+                        setFullName(event.target.value)
+                      }
+                      className={`h-12 w-full rounded-xl border pl-10 pr-4 text-sm outline-none transition ${
+                        darkMode
+                          ? "border-white/10 bg-white/[0.06] text-white placeholder:text-slate-500 focus:border-white/25"
+                          : "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
+                      }`}
+                      placeholder="Your full name"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="email"
+                    className="mb-2 block text-sm font-semibold"
+                  >
+                    Email address
+                  </label>
+
+                  <div className="relative">
+                    <Mail
+                      size={17}
+                      className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${
+                        darkMode
+                          ? "text-slate-500"
+                          : "text-slate-400"
+                      }`}
+                    />
+
+                    <input
+                      id="email"
+                      type="email"
+                      value={profile.email ?? ""}
+                      disabled
+                      className={`h-12 w-full cursor-not-allowed rounded-xl border pl-10 pr-4 text-sm ${
+                        darkMode
+                          ? "border-white/10 bg-white/[0.03] text-slate-500"
+                          : "border-slate-200 bg-slate-100 text-slate-500"
+                      }`}
+                    />
+                  </div>
+
+                  <p
+                    className={`mt-1.5 text-[11px] ${
+                      darkMode
+                        ? "text-slate-500"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    Email is managed by your account.
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="phone"
+                    className="mb-2 block text-sm font-semibold"
+                  >
+                    Phone number
+                  </label>
+
+                  <div className="relative">
+                    <Phone
+                      size={17}
+                      className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${
+                        darkMode
+                          ? "text-slate-400"
+                          : "text-slate-500"
+                      }`}
+                    />
+
+                    <input
+                      id="phone"
+                      type="tel"
+                      value={phone}
+                      onChange={(event) =>
+                        setPhone(event.target.value)
+                      }
+                      className={`h-12 w-full rounded-xl border pl-10 pr-4 text-sm outline-none transition ${
+                        darkMode
+                          ? "border-white/10 bg-white/[0.06] text-white placeholder:text-slate-500 focus:border-white/25"
+                          : "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
+                      }`}
+                      placeholder="Phone number"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex justify-end">
+                <button
+                  type="button"
+                  onClick={saveProfile}
+                  disabled={savingProfile}
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
+                >
+                  {savingProfile ? (
                     <Loader2
                       size={16}
                       className="animate-spin"
                     />
-                    Saving...
-                  </>
-                ) : (
-                  <>
+                  ) : (
                     <Save size={16} />
-                    Save changes
-                  </>
-                )}
-              </button>
-            </div>
+                  )}
 
-            <div className="mt-6 grid gap-5 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <label
-                  htmlFor="fullName"
-                  className="mb-2 block text-sm font-semibold"
-                >
-                  Full name
-                </label>
-
-                <div className="relative">
-                  <User
-                    size={17}
-                    className={`absolute left-4 top-1/2 -translate-y-1/2 ${
-                      darkMode
-                        ? "text-slate-400"
-                        : "text-slate-500"
-                    }`}
-                  />
-
-                  <input
-                    id="fullName"
-                    type="text"
-                    required
-                    value={fullName}
-                    onChange={(event) =>
-                      setFullName(event.target.value)
-                    }
-                    className={`h-12 w-full rounded-xl border pl-11 pr-4 text-sm outline-none transition ${
-                      darkMode
-                        ? "border-white/10 bg-white/[0.06] text-white placeholder:text-slate-500 focus:border-white/25"
-                        : "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
-                    }`}
-                    placeholder="Your full name"
-                  />
-                </div>
+                  {savingProfile
+                    ? "Saving..."
+                    : "Save changes"}
+                </button>
               </div>
-
-              <div>
-                <label
-                  htmlFor="email"
-                  className="mb-2 block text-sm font-semibold"
-                >
-                  Email address
-                </label>
-
-                <div className="relative">
-                  <Mail
-                    size={17}
-                    className={`absolute left-4 top-1/2 -translate-y-1/2 ${
-                      darkMode
-                        ? "text-slate-400"
-                        : "text-slate-500"
-                    }`}
-                  />
-
-                  <input
-                    id="email"
-                    type="email"
-                    value={email}
-                    disabled
-                    className={`h-12 w-full rounded-xl border pl-11 pr-4 text-sm ${
-                      darkMode
-                        ? "border-white/10 bg-white/[0.03] text-slate-400"
-                        : "border-slate-200 bg-slate-100 text-slate-500"
-                    }`}
-                  />
-                </div>
-
-                <p
-                  className={`mt-2 text-[11px] ${
-                    darkMode
-                      ? "text-slate-500"
-                      : "text-slate-500"
-                  }`}
-                >
-                  Email is managed by your account.
-                </p>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="phone"
-                  className="mb-2 block text-sm font-semibold"
-                >
-                  Phone number
-                </label>
-
-                <div className="relative">
-                  <Phone
-                    size={17}
-                    className={`absolute left-4 top-1/2 -translate-y-1/2 ${
-                      darkMode
-                        ? "text-slate-400"
-                        : "text-slate-500"
-                    }`}
-                  />
-
-                  <input
-                    id="phone"
-                    type="tel"
-                    value={phone}
-                    onChange={(event) =>
-                      setPhone(event.target.value)
-                    }
-                    className={`h-12 w-full rounded-xl border pl-11 pr-4 text-sm outline-none transition ${
-                      darkMode
-                        ? "border-white/10 bg-white/[0.06] text-white placeholder:text-slate-500 focus:border-white/25"
-                        : "border-slate-200 bg-slate-50 text-slate-900 placeholder:text-slate-400 focus:border-slate-300 focus:bg-white"
-                    }`}
-                    placeholder="Phone number"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Profile picture */}
-            <section
-              className={`mt-8 rounded-2xl border p-5 ${
-                darkMode
-                  ? "border-white/10 bg-white/[0.03]"
-                  : "border-slate-200 bg-slate-50"
-              }`}
-            >
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h3 className="font-semibold">
-                    Profile picture
-                  </h3>
-
-                  <p
-                    className={`mt-1 text-xs ${
-                      darkMode
-                        ? "text-slate-400"
-                        : "text-slate-500"
-                    }`}
-                  >
-                    JPG, PNG, or WebP. Maximum file size:{" "}
-                    <strong>2 MB</strong>.
-                  </p>
-                </div>
-
-                <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10">
-                  <Upload size={15} />
-                  Choose image
-
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={handleImageChange}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-
-              {selectedImage && (
-                <div
-                  className={`mt-4 flex items-center justify-between rounded-xl border p-3 ${
-                    darkMode
-                      ? "border-white/10 bg-white/[0.04]"
-                      : "border-slate-200 bg-white"
-                  }`}
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
-                      {imagePreview ? (
-                        <img
-                          src={imagePreview}
-                          alt="Selected profile"
-                          className="size-full object-cover"
-                        />
-                      ) : (
-                        <User size={17} />
-                      )}
-                    </div>
-
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">
-                        {selectedImage.name}
-                      </p>
-
-                      <p className="text-[11px] text-slate-500">
-                        {(selectedImage.size / 1024 / 1024).toFixed(
-                          2
-                        )}{" "}
-                        MB
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={removeSelectedImage}
-                    className="ml-3 flex size-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
-                    aria-label="Remove selected profile picture"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-              )}
             </section>
 
             {/* Resume */}
             <section
-              className={`mt-5 rounded-2xl border p-5 ${
+              className={`rounded-3xl border p-5 shadow-sm sm:p-7 ${
                 darkMode
-                  ? "border-white/10 bg-white/[0.03]"
-                  : "border-slate-200 bg-slate-50"
+                  ? "border-white/10 bg-white/[0.04]"
+                  : "border-slate-200 bg-white"
               }`}
             >
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h3 className="font-semibold">
-                    Resume / CV
-                  </h3>
+              <div>
+                <h2 className="text-lg font-bold">
+                  Resume
+                </h2>
 
-                  <p
-                    className={`mt-1 text-xs ${
-                      darkMode
-                        ? "text-slate-400"
-                        : "text-slate-500"
-                    }`}
-                  >
-                    PDF only. Maximum file size:{" "}
-                    <strong>2 MB</strong>.
-                  </p>
-                </div>
-
-                <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10">
-                  <Upload size={15} />
-                  Choose resume
-
-                  <input
-                    type="file"
-                    accept="application/pdf"
-                    onChange={handleResumeChange}
-                    className="hidden"
-                  />
-                </label>
-              </div>
-
-              {(selectedResume || resumeUrl) && (
-                <div
-                  className={`mt-4 flex items-center justify-between rounded-xl border p-3 ${
+                <p
+                  className={`mt-1 text-sm ${
                     darkMode
-                      ? "border-white/10 bg-white/[0.04]"
-                      : "border-slate-200 bg-white"
+                      ? "text-slate-400"
+                      : "text-slate-500"
                   }`}
                 >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div
-                      className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${
-                        darkMode
-                          ? "bg-red-500/10 text-red-400"
-                          : "bg-red-50 text-red-500"
-                      }`}
-                    >
-                      <FileText size={19} />
+                  Upload the resume recruiters should review
+                  with your applications.
+                </p>
+              </div>
+
+              {resumeUrl ? (
+                <div
+                  className={`mt-6 rounded-2xl border p-4 ${
+                    darkMode
+                      ? "border-white/10 bg-white/[0.04]"
+                      : "border-slate-200 bg-slate-50"
+                  }`}
+                >
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div
+                        className={`flex size-11 shrink-0 items-center justify-center rounded-xl ${
+                          darkMode
+                            ? "bg-white/10 text-slate-300"
+                            : "bg-white text-slate-600"
+                        }`}
+                      >
+                        <FileText size={20} />
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">
+                          {resumeName || "Resume"}
+                        </p>
+
+                        <p
+                          className={`mt-0.5 text-xs ${
+                            darkMode
+                              ? "text-slate-500"
+                              : "text-slate-500"
+                          }`}
+                        >
+                          Current resume
+                        </p>
+                      </div>
                     </div>
 
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">
-                        {selectedResume
-                          ? selectedResume.name
-                          : resumeName || "Resume uploaded"}
-                      </p>
-
-                      {selectedResume ? (
-                        <p className="text-[11px] text-slate-500">
-                          {(
-                            selectedResume.size /
-                            1024 /
-                            1024
-                          ).toFixed(2)}{" "}
-                          MB
-                        </p>
-                      ) : (
-                        <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
-                          Resume available
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="ml-3 flex shrink-0 items-center gap-2">
-                    {resumeUrl && !selectedResume && (
+                    <div className="flex flex-wrap gap-2">
                       <a
                         href={resumeUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="hidden rounded-lg px-2.5 py-1.5 text-xs font-semibold text-cyan-700 hover:bg-cyan-50 sm:block dark:text-cyan-400 dark:hover:bg-cyan-400/10"
+                        className={`inline-flex h-10 items-center justify-center rounded-xl border px-4 text-sm font-semibold ${
+                          darkMode
+                            ? "border-white/10 text-white hover:bg-white/10"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"
+                        }`}
                       >
-                        View
+                        View resume
                       </a>
-                    )}
 
-                    {selectedResume && (
+                      <label
+                        className={`inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200 ${
+                          uploadingResume
+                            ? "pointer-events-none opacity-60"
+                            : ""
+                        }`}
+                      >
+                        {uploadingResume ? (
+                          <Loader2
+                            size={15}
+                            className="animate-spin"
+                          />
+                        ) : (
+                          <Upload size={15} />
+                        )}
+
+                        Replace
+
+                        <input
+                          type="file"
+                          accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                          className="hidden"
+                          onChange={handleResumeChange}
+                          disabled={uploadingResume}
+                        />
+                      </label>
+
                       <button
                         type="button"
-                        onClick={removeSelectedResume}
-                        className="flex size-8 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
-                        aria-label="Remove selected resume"
+                        onClick={deleteResume}
+                        disabled={deletingResume}
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl px-3 text-sm font-semibold text-red-600 transition hover:bg-red-500/10 disabled:opacity-50"
                       >
-                        <X size={16} />
+                        {deletingResume ? (
+                          <Loader2
+                            size={15}
+                            className="animate-spin"
+                          />
+                        ) : (
+                          <Trash2 size={15} />
+                        )}
+
+                        Delete
                       </button>
-                    )}
+                    </div>
                   </div>
                 </div>
+              ) : (
+                <label
+                  className={`mt-6 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-10 text-center transition ${
+                    darkMode
+                      ? "border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]"
+                      : "border-slate-300 bg-slate-50 hover:border-slate-400 hover:bg-white"
+                  } ${
+                    uploadingResume
+                      ? "pointer-events-none opacity-60"
+                      : ""
+                  }`}
+                >
+                  <div
+                    className={`flex size-12 items-center justify-center rounded-2xl ${
+                      darkMode
+                        ? "bg-white/10 text-slate-300"
+                        : "bg-white text-slate-600"
+                    }`}
+                  >
+                    {uploadingResume ? (
+                      <Loader2
+                        size={22}
+                        className="animate-spin"
+                      />
+                    ) : (
+                      <Upload size={22} />
+                    )}
+                  </div>
+
+                  <p className="mt-4 text-sm font-semibold">
+                    {uploadingResume
+                      ? "Uploading resume..."
+                      : "Upload your resume"}
+                  </p>
+
+                  <p
+                    className={`mt-1 max-w-sm text-xs leading-5 ${
+                      darkMode
+                        ? "text-slate-500"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    PDF, DOC, or DOCX. Maximum file size is
+                    2 MB.
+                  </p>
+
+                  <span className="mt-4 inline-flex h-10 items-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white dark:bg-white dark:text-slate-900">
+                    <Upload size={15} />
+                    Choose file
+                  </span>
+
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    className="hidden"
+                    onChange={handleResumeChange}
+                    disabled={uploadingResume}
+                  />
+                </label>
               )}
             </section>
 
-            {/* Upload information */}
-            <div
-              className={`mt-5 flex gap-3 rounded-2xl border p-4 ${
+            {/* Profile completeness */}
+            <section
+              className={`rounded-3xl border p-5 shadow-sm sm:p-7 ${
                 darkMode
-                  ? "border-cyan-400/10 bg-cyan-400/[0.04]"
-                  : "border-cyan-200 bg-cyan-50"
+                  ? "border-white/10 bg-white/[0.04]"
+                  : "border-slate-200 bg-white"
               }`}
             >
-              <ShieldCheck
-                size={19}
-                className="mt-0.5 shrink-0 text-cyan-600"
-              />
+              <h2 className="text-lg font-bold">
+                Profile readiness
+              </h2>
 
-              <div>
-                <p className="text-sm font-semibold">
-                  File upload requirements
-                </p>
+              <div className="mt-5 space-y-3">
+                <ReadinessItem
+                  completed={Boolean(fullName.trim())}
+                  label="Full name"
+                  darkMode={darkMode}
+                />
 
-                <p
-                  className={`mt-1 text-xs leading-5 ${
-                    darkMode
-                      ? "text-slate-400"
-                      : "text-slate-600"
-                  }`}
-                >
-                  Profile pictures must be JPG, PNG, or WebP and
-                  resumes must be PDF files. Both files must be
-                  no larger than 2 MB.
-                </p>
+                <ReadinessItem
+                  completed={Boolean(profile.email)}
+                  label="Email address"
+                  darkMode={darkMode}
+                />
+
+                <ReadinessItem
+                  completed={Boolean(phone.trim())}
+                  label="Phone number"
+                  darkMode={darkMode}
+                />
+
+                <ReadinessItem
+                  completed={Boolean(profileImageUrl)}
+                  label="Profile picture"
+                  darkMode={darkMode}
+                />
+
+                <ReadinessItem
+                  completed={Boolean(resumeUrl)}
+                  label="Resume"
+                  darkMode={darkMode}
+                />
               </div>
-            </div>
-
-            {/* Bottom save */}
-            <div className="mt-7 flex justify-end border-t pt-6">
-              <button
-                type="submit"
-                disabled={
-                  saving ||
-                  uploadingImage ||
-                  uploadingResume
-                }
-                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-6 text-sm font-semibold text-white shadow-lg transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
-              >
-                {saving ||
-                uploadingImage ||
-                uploadingResume ? (
-                  <>
-                    <Loader2
-                      size={17}
-                      className="animate-spin"
-                    />
-
-                    {uploadingImage
-                      ? "Uploading picture..."
-                      : uploadingResume
-                        ? "Uploading resume..."
-                        : "Saving..."}
-                  </>
-                ) : (
-                  <>
-                    <Save size={17} />
-                    Save profile
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
+            </section>
+          </div>
         </div>
       </div>
     </main>
+  );
+}
+
+function ReadinessItem({
+  completed,
+  label,
+  darkMode,
+}: {
+  completed: boolean;
+  label: string;
+  darkMode: boolean;
+}) {
+  return (
+    <div
+      className={`flex items-center justify-between rounded-xl border px-4 py-3 ${
+        darkMode
+          ? "border-white/10 bg-white/[0.03]"
+          : "border-slate-200 bg-slate-50"
+      }`}
+    >
+      <span
+        className={`text-sm font-medium ${
+          darkMode ? "text-slate-300" : "text-slate-700"
+        }`}
+      >
+        {label}
+      </span>
+
+      <span
+        className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
+          completed
+            ? "text-emerald-600 dark:text-emerald-400"
+            : darkMode
+              ? "text-slate-500"
+              : "text-slate-400"
+        }`}
+      >
+        <CheckCircle2 size={15} />
+        {completed ? "Complete" : "Missing"}
+      </span>
+    </div>
   );
 }
