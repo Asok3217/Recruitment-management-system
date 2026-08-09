@@ -1,10 +1,10 @@
+
 "use client";
 
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowRight,
   BriefcaseBusiness,
   Eye,
   EyeOff,
@@ -35,34 +35,103 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      // 1. Authenticate the user
+      const { data, error: loginError } =
+        await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
 
-    if (error) {
-      setError(error.message);
+      if (loginError) {
+        setError(loginError.message);
+        return;
+      }
+
+      if (!data.user) {
+        setError("Unable to sign in. Please try again.");
+        return;
+      }
+
+      // 2. Get the user's role from profiles
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role, is_active")
+        .eq("id", data.user.id)
+        .single();
+
+      if (profileError) {
+        console.error("Profile error:", profileError);
+
+        await supabase.auth.signOut();
+
+        setError(
+          "Your account profile could not be loaded. Please contact the administrator."
+        );
+
+        return;
+      }
+
+      // 3. Check whether the account is active
+      if (!profile.is_active) {
+        await supabase.auth.signOut();
+
+        setError(
+          "Your account has been deactivated. Please contact the administrator."
+        );
+
+        return;
+      }
+
+      // 4. Redirect according to the user's role
+      switch (profile.role) {
+        case "admin":
+          router.replace("/admin/dashboard");
+          break;
+
+        case "recruiter":
+          router.replace("/recruiter/dashboard");
+          break;
+
+        case "candidate":
+          router.replace("/candidate/dashboard");
+          break;
+
+        default:
+          await supabase.auth.signOut();
+
+          setError(
+            "Your account has an invalid role. Please contact the administrator."
+          );
+      }
+    } catch (err) {
+      console.error("Login error:", err);
+      setError("Something went wrong. Please try again.");
+    } finally {
       setLoading(false);
-      return;
     }
-
-    router.push("/");
-    router.refresh();
   }
 
   async function handleGoogleLogin() {
     setError("");
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
+    try {
+      const { error: oauthError } =
+        await supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: {
+            redirectTo: `${window.location.origin}/auth/callback`,
+          },
+        });
 
-    if (error) {
-      setError(error.message);
+      if (oauthError) {
+        setError(oauthError.message);
+        setLoading(false);
+      }
+    } catch (err) {
+      console.error("Google login error:", err);
+      setError("Unable to continue with Google.");
       setLoading(false);
     }
   }
@@ -76,7 +145,7 @@ export default function LoginPage() {
       }`}
     >
       {/* Background */}
-      <div className="absolute inset-0">
+      <div className="pointer-events-none absolute inset-0">
         <div
           className={`absolute inset-0 ${
             darkMode
@@ -87,25 +156,25 @@ export default function LoginPage() {
 
         {/* Decorative circles */}
         <div
-          className={`absolute left-1/2 top-[44%] h-[700px] w-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full border ${
+          className={`absolute left-1/2 top-[44%] h-[700px] w-[700px] max-w-[170vw] -translate-x-1/2 -translate-y-1/2 rounded-full border ${
             darkMode ? "border-white/5" : "border-white/80"
           }`}
         />
 
         <div
-          className={`absolute left-1/2 top-[44%] h-[500px] w-[500px] -translate-x-1/2 -translate-y-1/2 rounded-full border ${
+          className={`absolute left-1/2 top-[44%] h-[500px] w-[500px] max-w-[130vw] -translate-x-1/2 -translate-y-1/2 rounded-full border ${
             darkMode ? "border-white/5" : "border-white/70"
           }`}
         />
 
         {/* Soft glow */}
         <div
-          className={`absolute left-1/2 top-[38%] h-80 w-80 -translate-x-1/2 rounded-full blur-3xl ${
+          className={`absolute left-1/2 top-[38%] h-80 w-80 max-w-[80vw] -translate-x-1/2 rounded-full blur-3xl ${
             darkMode ? "bg-cyan-900/20" : "bg-cyan-200/40"
           }`}
         />
 
-        {/* Cloud-like bottom effect */}
+        {/* Bottom glow */}
         <div
           className={`absolute -bottom-40 left-1/2 h-80 w-[120%] -translate-x-1/2 rounded-[50%] blur-3xl ${
             darkMode ? "bg-slate-900/80" : "bg-white/90"
@@ -129,6 +198,7 @@ export default function LoginPage() {
           </span>
         </Link>
 
+        {/* Theme toggle */}
         <button
           type="button"
           onClick={() => setDarkMode((value) => !value)}
@@ -137,7 +207,9 @@ export default function LoginPage() {
               ? "border-white/10 bg-white/10 text-white hover:bg-white/15"
               : "border-black/5 bg-white/60 text-slate-700 hover:bg-white"
           }`}
-          aria-label="Toggle theme"
+          aria-label={
+            darkMode ? "Switch to light mode" : "Switch to dark mode"
+          }
         >
           {darkMode ? <Sun size={18} /> : <Moon size={18} />}
         </button>
@@ -152,8 +224,6 @@ export default function LoginPage() {
               : "border-white/70 bg-white/65 shadow-slate-300/30"
           }`}
         >
-      
-
           {/* Heading */}
           <div className="mb-7 text-center">
             <h1 className="text-2xl font-bold tracking-tight sm:text-[27px]">
@@ -169,6 +239,7 @@ export default function LoginPage() {
             </p>
           </div>
 
+          {/* Login form */}
           <form onSubmit={handleLogin} className="space-y-4">
             {/* Email */}
             <div className="relative">
@@ -185,7 +256,7 @@ export default function LoginPage() {
                 autoComplete="email"
                 placeholder="Email address"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(event) => setEmail(event.target.value)}
                 className={`h-12 w-full rounded-xl border pl-11 pr-4 text-sm outline-none transition-all placeholder:text-slate-400 ${
                   darkMode
                     ? "border-white/10 bg-white/[0.07] text-white focus:border-white/25 focus:bg-white/10"
@@ -209,7 +280,7 @@ export default function LoginPage() {
                 autoComplete="current-password"
                 placeholder="Password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(event) => setPassword(event.target.value)}
                 className={`h-12 w-full rounded-xl border pl-11 pr-11 text-sm outline-none transition-all placeholder:text-slate-400 ${
                   darkMode
                     ? "border-white/10 bg-white/[0.07] text-white focus:border-white/25 focus:bg-white/10"
@@ -220,7 +291,11 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => setShowPassword((value) => !value)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 transition hover:text-slate-600 dark:hover:text-white"
+                className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 transition ${
+                  darkMode
+                    ? "text-slate-400 hover:text-white"
+                    : "text-slate-400 hover:text-slate-700"
+                }`}
                 aria-label={
                   showPassword ? "Hide password" : "Show password"
                 }
@@ -249,18 +324,28 @@ export default function LoginPage() {
 
             {/* Error */}
             {error && (
-              <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-xs leading-5 text-red-500">
+              <div
+                role="alert"
+                className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-xs leading-5 text-red-500"
+              >
                 {error}
               </div>
             )}
 
-            {/* Login */}
+            {/* Login button */}
             <button
               type="submit"
               disabled={loading}
               className="h-12 w-full rounded-xl bg-[#18191f] text-sm font-semibold text-white shadow-lg shadow-black/10 transition-all hover:-translate-y-0.5 hover:bg-[#24252c] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-[#111318] dark:hover:bg-slate-200"
             >
-              {loading ? "Signing in..." : "Sign in"}
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  Signing in...
+                </span>
+              ) : (
+                "Sign in"
+              )}
             </button>
           </form>
 
@@ -292,7 +377,7 @@ export default function LoginPage() {
             type="button"
             onClick={handleGoogleLogin}
             disabled={loading}
-            className={`flex h-11 w-full items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-all ${
+            className={`flex h-11 w-full items-center justify-center gap-2 rounded-xl border text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
               darkMode
                 ? "border-white/10 bg-white/[0.05] text-white hover:bg-white/10"
                 : "border-slate-200 bg-white/70 text-slate-700 hover:bg-white"
