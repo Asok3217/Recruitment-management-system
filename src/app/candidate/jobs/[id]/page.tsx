@@ -8,17 +8,15 @@ import {
   ArrowLeft,
   BriefcaseBusiness,
   Building2,
-  CalendarDays,
   CheckCircle2,
   Clock3,
-  ExternalLink,
   FileText,
   MapPin,
   Moon,
   Send,
-  ShieldCheck,
   Sun,
-  Users,
+  UserRound,
+  XCircle,
 } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/client";
@@ -27,54 +25,50 @@ type Job = {
   id: string;
   title: string;
   description: string;
-  requirements: string | null;
-  responsibilities: string | null;
   location: string | null;
-  employment_type:
-    | "full_time"
-    | "part_time"
-    | "contract"
-    | "internship";
-  experience_level:
-    | "entry"
-    | "mid"
-    | "senior"
-    | "lead"
-    | "executive"
-    | null;
+  employment_type: string;
+  experience_level: string | null;
   salary_min: number | null;
   salary_max: number | null;
   application_deadline: string | null;
   status: string;
-  company_id: string | null;
-  company: {
-    id: string;
-    name: string;
-    logo_url: string | null;
-    website_url: string | null;
-    description: string | null;
-    location: string | null;
-    industry: string | null;
-  } | null;
+  created_at: string;
+};
+
+type Application = {
+  id: string;
+  job_id: string;
+  candidate_id: string;
+  status: string;
+  applied_at: string;
+  updated_at: string;
 };
 
 type Profile = {
   id: string;
-  role: string;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
 };
 
-function formatEmploymentType(value: Job["employment_type"]) {
-  return value
-    .replace("_", " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function formatExperience(value: Job["experience_level"]) {
+function formatEmploymentType(value: string | null) {
   if (!value) return "Not specified";
 
   return value
-    .replace("_", " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) =>
+      letter.toUpperCase()
+    );
+}
+
+function formatExperience(value: string | null) {
+  if (!value) return "Not specified";
+
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) =>
+      letter.toUpperCase()
+    );
 }
 
 function formatSalary(
@@ -101,9 +95,90 @@ function formatDate(date: string | null) {
 
   return new Date(date).toLocaleDateString("en-US", {
     year: "numeric",
-    month: "long",
+    month: "short",
     day: "numeric",
   });
+}
+
+function getStatusLabel(status: string) {
+  switch (status) {
+    case "applied":
+      return "Applied";
+
+    case "screening":
+      return "Screening";
+
+    case "shortlisted":
+      return "Shortlisted";
+
+    case "interview":
+      return "Interview";
+
+    case "selected":
+      return "Selected";
+
+    case "offer_sent":
+      return "Offer Sent";
+
+    case "hired":
+      return "Hired";
+
+    case "rejected":
+      return "Rejected";
+
+    case "withdrawn":
+      return "Withdrawn";
+
+    default:
+      return status
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (letter) =>
+          letter.toUpperCase()
+        );
+  }
+}
+
+function getStatusClasses(
+  status: string,
+  darkMode: boolean
+) {
+  if (
+    status === "selected" ||
+    status === "hired"
+  ) {
+    return darkMode
+      ? "bg-emerald-400/10 text-emerald-400"
+      : "bg-emerald-50 text-emerald-700";
+  }
+
+  if (
+    status === "shortlisted" ||
+    status === "interview" ||
+    status === "offer_sent"
+  ) {
+    return darkMode
+      ? "bg-blue-400/10 text-blue-400"
+      : "bg-blue-50 text-blue-700";
+  }
+
+  if (
+    status === "rejected" ||
+    status === "withdrawn"
+  ) {
+    return darkMode
+      ? "bg-red-400/10 text-red-400"
+      : "bg-red-50 text-red-700";
+  }
+
+  if (status === "screening") {
+    return darkMode
+      ? "bg-amber-400/10 text-amber-400"
+      : "bg-amber-50 text-amber-700";
+  }
+
+  return darkMode
+    ? "bg-slate-400/10 text-slate-300"
+    : "bg-slate-100 text-slate-700";
 }
 
 export default function CandidateJobDetailsPage() {
@@ -113,37 +188,44 @@ export default function CandidateJobDetailsPage() {
 
   /*
    * IMPORTANT:
-   * useParams() can return string | string[] | undefined.
-   * We normalize it into a guaranteed string.
+   *
+   * This is the only place where we read the dynamic route ID.
+   *
+   * /candidate/jobs/page.tsx does NOT have params.id.
+   *
+   * /candidate/jobs/[id]/page.tsx DOES have params.id.
    */
-  const rawJobId = Array.isArray(params.id)
-    ? params.id[0]
-    : params.id;
+  const rawId = params?.id;
 
   const jobId =
-    typeof rawJobId === "string" ? rawJobId : "";
+    typeof rawId === "string"
+      ? rawId
+      : Array.isArray(rawId)
+        ? rawId[0]
+        : undefined;
 
   const [job, setJob] = useState<Job | null>(null);
+  const [application, setApplication] =
+    useState<Application | null>(null);
   const [profile, setProfile] =
     useState<Profile | null>(null);
 
   const [loading, setLoading] = useState(true);
-  const [applying, setApplying] = useState(false);
-  const [alreadyApplied, setAlreadyApplied] =
+  const [actionLoading, setActionLoading] =
     useState(false);
-
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   const [darkMode, setDarkMode] = useState(false);
 
   /*
-   * Load job
+   * ----------------------------------------------------
+   * LOAD JOB + APPLICATION
+   * ----------------------------------------------------
    */
   useEffect(() => {
     if (!jobId) {
-      setError("Invalid job ID.");
       setLoading(false);
+      setError("Job ID is missing.");
       return;
     }
 
@@ -153,44 +235,42 @@ export default function CandidateJobDetailsPage() {
 
       try {
         /*
-         * Get currently logged-in user
+         * Get logged-in user
          */
         const {
           data: { user },
+          error: userError,
         } = await supabase.auth.getUser();
 
-        /*
-         * Load candidate profile and application status
-         */
-        if (user) {
-          const { data: profileData } =
-            await supabase
-              .from("profiles")
-              .select("id, role")
-              .eq("id", user.id)
-              .single();
+        if (userError) {
+          throw userError;
+        }
 
-          if (profileData) {
-            setProfile(profileData as Profile);
-          }
-
-          const { data: applicationData } =
-            await supabase
-              .from("applications")
-              .select("id")
-              .eq("candidate_id", user.id)
-              .eq("job_id", jobId)
-              .maybeSingle();
-
-          if (applicationData) {
-            setAlreadyApplied(true);
-          }
+        if (!user) {
+          router.push("/auth/login");
+          return;
         }
 
         /*
-         * Load published job
+         * Get profile
          */
-        const { data, error: jobError } =
+        const { data: profileData } =
+          await supabase
+            .from("profiles")
+            .select(
+              "id,full_name,email,phone"
+            )
+            .eq("id", user.id)
+            .maybeSingle();
+
+        if (profileData) {
+          setProfile(profileData as Profile);
+        }
+
+        /*
+         * Get job
+         */
+        const { data: jobData, error: jobError } =
           await supabase
             .from("jobs")
             .select(
@@ -198,8 +278,6 @@ export default function CandidateJobDetailsPage() {
                 id,
                 title,
                 description,
-                requirements,
-                responsibilities,
                 location,
                 employment_type,
                 experience_level,
@@ -207,1034 +285,932 @@ export default function CandidateJobDetailsPage() {
                 salary_max,
                 application_deadline,
                 status,
-                company_id,
-                companies (
-                  id,
-                  name,
-                  logo_url,
-                  website_url,
-                  description,
-                  location,
-                  industry
-                )
+                created_at
               `
             )
             .eq("id", jobId)
-            .eq("status", "published")
-            .single();
+            .maybeSingle();
 
         if (jobError) {
-          console.error(jobError);
-          setError("Unable to load this job.");
-          setLoading(false);
+          throw jobError;
+        }
+
+        if (!jobData) {
+          setJob(null);
+          setError("This job could not be found.");
           return;
         }
 
-        if (!data) {
-          setError("Job not found.");
-          setLoading(false);
-          return;
+        setJob(jobData as Job);
+
+        /*
+         * ------------------------------------------------
+         * IMPORTANT:
+         *
+         * We deliberately DO NOT filter by status here.
+         *
+         * Therefore:
+         *
+         * applied    -> found
+         * screening  -> found
+         * shortlisted -> found
+         * interview  -> found
+         * rejected   -> found
+         * withdrawn  -> FOUND
+         *
+         * This is what allows the page to display
+         * "Withdrawn" instead of incorrectly displaying
+         * "Apply".
+         * ------------------------------------------------
+         */
+        const {
+          data: applicationData,
+          error: applicationError,
+        } = await supabase
+          .from("applications")
+          .select(
+            `
+              id,
+              job_id,
+              candidate_id,
+              status,
+              applied_at,
+              updated_at
+            `
+          )
+          .eq("job_id", jobId)
+          .eq("candidate_id", user.id)
+          .maybeSingle();
+
+        if (applicationError) {
+          throw applicationError;
         }
 
-        const raw = data as any;
-
-        const normalizedJob: Job = {
-          id: raw.id,
-          title: raw.title,
-          description: raw.description,
-          requirements: raw.requirements,
-          responsibilities: raw.responsibilities,
-          location: raw.location,
-          employment_type: raw.employment_type,
-          experience_level: raw.experience_level,
-          salary_min: raw.salary_min,
-          salary_max: raw.salary_max,
-          application_deadline:
-            raw.application_deadline,
-          status: raw.status,
-          company_id: raw.company_id,
-          company: Array.isArray(raw.companies)
-            ? raw.companies[0] ?? null
-            : raw.companies ?? null,
-        };
-
-        setJob(normalizedJob);
+        setApplication(
+          applicationData as Application | null
+        );
       } catch (err) {
         console.error(err);
-        setError("Something went wrong while loading the job.");
+
+        setError(
+          "Unable to load this job. Please try again."
+        );
       } finally {
         setLoading(false);
       }
     }
 
     loadJob();
-  }, [jobId, supabase]);
+  }, [jobId, router, supabase]);
 
   /*
-   * Apply for job
+   * ----------------------------------------------------
+   * APPLY
+   * ----------------------------------------------------
+   *
+   * This is used only when the candidate has NO
+   * existing application row.
+   *
+   * If an application exists with status withdrawn,
+   * we use REAPPLY instead.
    */
   async function handleApply() {
-    if (!job) return;
+    if (!jobId) {
+      setError("Job ID is missing.");
+      return;
+    }
 
+    setActionLoading(true);
     setError("");
-    setSuccess("");
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-    if (!user) {
-      router.push("/auth/login");
-      return;
-    }
-
-    if (profile && profile.role !== "candidate") {
-      setError("Only candidates can apply for jobs.");
-      return;
-    }
-
-    if (alreadyApplied) {
-      setError(
-        "You have already applied for this position."
-      );
-      return;
-    }
-
-    setApplying(true);
-
-    /*
-     * IMPORTANT:
-     * Your database accepts "applied", not "submitted".
-     */
-    const { error: applicationError } =
-      await supabase.from("applications").insert({
-        candidate_id: user.id,
-        job_id: job.id,
-        status: "applied",
-      });
-
-    if (applicationError) {
-      console.error(applicationError);
-
-      const message =
-        applicationError.message.toLowerCase();
-
-      if (
-        message.includes("duplicate") ||
-        message.includes("unique")
-      ) {
-        setAlreadyApplied(true);
-        setError(
-          "You have already applied for this position."
-        );
-      } else {
-        setError(applicationError.message);
+      if (userError) {
+        throw userError;
       }
 
-      setApplying(false);
-      return;
-    }
+      if (!user) {
+        router.push("/auth/login");
+        return;
+      }
 
-    setAlreadyApplied(true);
-    setSuccess(
-      "Application submitted successfully."
-    );
-    setApplying(false);
+      /*
+       * Safety check.
+       *
+       * Before inserting a new application, check again
+       * whether an application already exists.
+       */
+      const {
+        data: existingApplication,
+        error: existingError,
+      } = await supabase
+        .from("applications")
+        .select(
+          `
+            id,
+            job_id,
+            candidate_id,
+            status,
+            applied_at,
+            updated_at
+          `
+        )
+        .eq("job_id", jobId)
+        .eq("candidate_id", user.id)
+        .maybeSingle();
+
+      if (existingError) {
+        throw existingError;
+      }
+
+      /*
+       * If withdrawn, reapply instead of inserting.
+       */
+      if (
+        existingApplication &&
+        existingApplication.status ===
+          "withdrawn"
+      ) {
+        await handleReapplyInternal(
+          existingApplication.id
+        );
+        return;
+      }
+
+      /*
+       * If any other application exists, do not create
+       * another application.
+       */
+      if (existingApplication) {
+        setApplication(
+          existingApplication as Application
+        );
+        return;
+      }
+
+      /*
+       * Create the first application.
+       */
+      const { data: newApplication, error } =
+        await supabase
+          .from("applications")
+          .insert({
+            job_id: jobId,
+            candidate_id: user.id,
+            status: "applied",
+          })
+          .select(
+            `
+              id,
+              job_id,
+              candidate_id,
+              status,
+              applied_at,
+              updated_at
+            `
+          )
+          .single();
+
+      if (error) {
+        throw error;
+      }
+
+      setApplication(
+        newApplication as Application
+      );
+    } catch (err: any) {
+      console.error(err);
+
+      setError(
+        err?.message ||
+          "Unable to submit your application."
+      );
+    } finally {
+      setActionLoading(false);
+    }
   }
 
   /*
-   * Loading state
+   * ----------------------------------------------------
+   * REAPPLY INTERNAL
+   * ----------------------------------------------------
+   *
+   * Same application row.
+   *
+   * withdrawn
+   *     ↓
+   * applied
+   */
+  async function handleReapplyInternal(
+    applicationId: string
+  ) {
+    const { data, error } = await supabase
+      .from("applications")
+      .update({
+        status: "applied",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", applicationId)
+      .select(
+        `
+          id,
+          job_id,
+          candidate_id,
+          status,
+          applied_at,
+          updated_at
+        `
+      )
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    setApplication(data as Application);
+  }
+
+  /*
+   * ----------------------------------------------------
+   * REAPPLY
+   * ----------------------------------------------------
+   */
+  async function handleReapply() {
+    if (!application) {
+      return;
+    }
+
+    if (application.status !== "withdrawn") {
+      return;
+    }
+
+    setActionLoading(true);
+    setError("");
+
+    try {
+      await handleReapplyInternal(
+        application.id
+      );
+    } catch (err: any) {
+      console.error(err);
+
+      setError(
+        err?.message ||
+          "Unable to reapply for this job."
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  /*
+   * ----------------------------------------------------
+   * WITHDRAW
+   * ----------------------------------------------------
+   *
+   * We keep the same application row.
+   *
+   * applied
+   *     ↓
+   * withdrawn
+   */
+  async function handleWithdraw() {
+    if (!application) {
+      return;
+    }
+
+    /*
+     * Prevent withdrawing a withdrawn application.
+     */
+    if (
+      application.status === "withdrawn" ||
+      application.status === "rejected" ||
+      application.status === "hired"
+    ) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Are you sure you want to withdraw your application? You will be able to reapply later."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setActionLoading(true);
+    setError("");
+
+    try {
+      const { data, error } =
+        await supabase
+          .from("applications")
+          .update({
+            status: "withdrawn",
+            updated_at:
+              new Date().toISOString(),
+          })
+          .eq("id", application.id)
+          .select(
+            `
+              id,
+              job_id,
+              candidate_id,
+              status,
+              applied_at,
+              updated_at
+            `
+          )
+          .single();
+
+      if (error) {
+        throw error;
+      }
+
+      setApplication(data as Application);
+    } catch (err: any) {
+      console.error(err);
+
+      setError(
+        err?.message ||
+          "Unable to withdraw your application."
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  /*
+   * ----------------------------------------------------
+   * LOADING
+   * ----------------------------------------------------
    */
   if (loading) {
     return (
       <main
         className={`min-h-dvh ${
           darkMode
-            ? "bg-[#070a10] text-white"
-            : "bg-[#f4f7fb] text-slate-900"
+            ? "bg-[#080b12] text-white"
+            : "bg-[#f6f9fc] text-slate-900"
         }`}
       >
-        <header
-          className={`border-b ${
-            darkMode
-              ? "border-white/10 bg-[#070a10]"
-              : "border-slate-200 bg-white"
-          }`}
-        >
-          <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-            <Link
-              href="/candidate/jobs"
-              className="flex items-center gap-2.5"
-            >
-              <div className="flex size-9 items-center justify-center rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900">
-                <BriefcaseBusiness size={18} />
-              </div>
+        <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
+          <div
+            className={`h-10 w-32 animate-pulse rounded-xl ${
+              darkMode
+                ? "bg-white/10"
+                : "bg-slate-200"
+            }`}
+          />
 
-              <span className="text-sm font-bold">
-                RMS
-              </span>
-            </Link>
-
-            <button
-              type="button"
-              onClick={() =>
-                setDarkMode((value) => !value)
-              }
-              className={`flex size-10 items-center justify-center rounded-full border ${
-                darkMode
-                  ? "border-white/10 bg-white/10 text-white"
-                  : "border-slate-200 bg-white text-slate-700"
-              }`}
-              aria-label="Toggle theme"
-            >
-              {darkMode ? (
-                <Sun size={18} />
-              ) : (
-                <Moon size={18} />
-              )}
-            </button>
-          </div>
-        </header>
-
-        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-          <div className="h-5 w-36 animate-pulse rounded bg-slate-200" />
-
-          <div className="mt-6 h-64 animate-pulse rounded-3xl bg-slate-200" />
-
-          <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="h-[500px] animate-pulse rounded-3xl bg-slate-200" />
-
-            <div className="h-80 animate-pulse rounded-3xl bg-slate-200" />
-          </div>
+          <div
+            className={`mt-6 h-[500px] animate-pulse rounded-3xl ${
+              darkMode
+                ? "bg-white/10"
+                : "bg-slate-200"
+            }`}
+          />
         </div>
       </main>
     );
   }
 
   /*
-   * Error state
+   * ----------------------------------------------------
+   * MISSING / INVALID JOB
+   * ----------------------------------------------------
    */
-  if (error && !job) {
+  if (!job) {
     return (
       <main
         className={`min-h-dvh ${
           darkMode
-            ? "bg-[#070a10] text-white"
-            : "bg-[#f4f7fb] text-slate-900"
+            ? "bg-[#080b12] text-white"
+            : "bg-[#f6f9fc] text-slate-900"
         }`}
       >
-        <header
-          className={`border-b ${
-            darkMode
-              ? "border-white/10 bg-[#070a10]"
-              : "border-slate-200 bg-white"
-          }`}
-        >
-          <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-            <Link
-              href="/candidate/jobs"
-              className="flex items-center gap-2.5"
-            >
-              <div className="flex size-9 items-center justify-center rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900">
-                <BriefcaseBusiness size={18} />
-              </div>
-
-              <span className="text-sm font-bold">
-                RMS
-              </span>
-            </Link>
-
-            <button
-              type="button"
-              onClick={() =>
-                setDarkMode((value) => !value)
-              }
-              className={`flex size-10 items-center justify-center rounded-full border ${
-                darkMode
-                  ? "border-white/10 bg-white/10 text-white"
-                  : "border-slate-200 bg-white text-slate-700"
-              }`}
-              aria-label="Toggle theme"
-            >
-              {darkMode ? (
-                <Sun size={18} />
-              ) : (
-                <Moon size={18} />
-              )}
-            </button>
+        <div className="mx-auto max-w-3xl px-4 py-16 text-center sm:px-6">
+          <div className="mx-auto flex size-16 items-center justify-center rounded-2xl bg-red-500/10 text-red-500">
+            <XCircle size={30} />
           </div>
-        </header>
 
-        <section className="mx-auto flex min-h-[70vh] max-w-3xl items-center justify-center px-5">
-          <div
-            className={`w-full rounded-3xl border p-8 text-center shadow-xl ${
+          <h1 className="mt-5 text-2xl font-bold">
+            Job unavailable
+          </h1>
+
+          <p
+            className={`mt-2 text-sm ${
               darkMode
-                ? "border-red-500/20 bg-white/[0.05]"
-                : "border-red-200 bg-white"
+                ? "text-slate-400"
+                : "text-slate-500"
             }`}
           >
-            <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-red-500/10 text-red-500">
-              <BriefcaseBusiness size={25} />
-            </div>
+            {error || "This job is unavailable."}
+          </p>
 
-            <h1 className="mt-5 text-2xl font-bold">
-              Job unavailable
-            </h1>
-
-            <p
-              className={`mt-2 text-sm ${
-                darkMode
-                  ? "text-slate-300"
-                  : "text-slate-600"
-              }`}
-            >
-              {error}
-            </p>
-
-            <Link
-              href="/candidate/jobs"
-              className="mt-6 inline-flex h-11 items-center gap-2 rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
-            >
-              <ArrowLeft size={16} />
-              Browse jobs
-            </Link>
-          </div>
-        </section>
+          <Link
+            href="/candidate/jobs"
+            className="mt-6 inline-flex h-11 items-center gap-2 rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
+          >
+            <ArrowLeft size={16} />
+            Browse jobs
+          </Link>
+        </div>
       </main>
     );
   }
 
-  if (!job) return null;
+  /*
+   * ----------------------------------------------------
+   * APPLICATION STATE
+   * ----------------------------------------------------
+   *
+   * These values are calculated from the actual
+   * application row retrieved from Supabase.
+   */
+  const isWithdrawn =
+    application?.status === "withdrawn";
+
+  const hasApplication =
+    application !== null;
+
+  const canWithdraw =
+    hasApplication &&
+    !isWithdrawn &&
+    application.status !== "rejected" &&
+    application.status !== "hired";
 
   return (
     <main
       className={`min-h-dvh overflow-x-hidden transition-colors duration-300 ${
         darkMode
-          ? "bg-[#070a10] text-white"
-          : "bg-[#f4f7fb] text-slate-900"
+          ? "bg-[#080b12] text-white"
+          : "bg-[#f6f9fc] text-slate-900"
       }`}
     >
-      {/* Background glow */}
-      <div
-        className={`pointer-events-none fixed left-1/2 top-0 -z-0 h-[420px] w-[650px] -translate-x-1/2 rounded-full blur-3xl ${
+      {/* Theme */}
+      <button
+        type="button"
+        onClick={() => setDarkMode((value) => !value)}
+        className={`fixed right-5 top-5 z-50 flex size-10 items-center justify-center rounded-full border shadow-lg backdrop-blur ${
           darkMode
-            ? "bg-cyan-950/20"
-            : "bg-cyan-100/50"
+            ? "border-white/10 bg-white/10 text-white"
+            : "border-slate-200 bg-white text-slate-700"
         }`}
-      />
-
-      {/* Header */}
-      <header
-        className={`sticky top-0 z-30 border-b backdrop-blur-xl ${
-          darkMode
-            ? "border-white/10 bg-[#070a10]/90"
-            : "border-slate-200/80 bg-white/95"
-        }`}
+        aria-label="Toggle theme"
       >
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-          <Link
-            href="/candidate/jobs"
-            className="flex items-center gap-2.5"
-          >
-            <div className="flex size-9 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900">
-              <BriefcaseBusiness size={18} />
-            </div>
+        {darkMode ? (
+          <Sun size={18} />
+        ) : (
+          <Moon size={18} />
+        )}
+      </button>
 
-            <span className="text-sm font-bold sm:text-base">
-              RMS
-            </span>
-          </Link>
-
-          <div className="flex items-center gap-2">
-            <Link
-              href="/candidate/jobs"
-              className={`hidden h-10 items-center gap-2 rounded-xl px-3 text-sm font-medium transition sm:flex ${
-                darkMode
-                  ? "text-slate-300 hover:bg-white/10 hover:text-white"
-                  : "text-slate-700 hover:bg-slate-100 hover:text-slate-950"
-              }`}
-            >
-              <ArrowLeft size={16} />
-              All jobs
-            </Link>
-
-            <button
-              type="button"
-              onClick={() =>
-                setDarkMode((value) => !value)
-              }
-              className={`flex size-10 items-center justify-center rounded-full border shadow-sm transition ${
-                darkMode
-                  ? "border-white/10 bg-white/10 text-white hover:bg-white/15"
-                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-              aria-label="Toggle theme"
-            >
-              {darkMode ? (
-                <Sun size={18} />
-              ) : (
-                <Moon size={18} />
-              )}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Page */}
-      <div className="relative z-10 mx-auto max-w-7xl px-4 py-6 pb-28 sm:px-6 sm:py-8 sm:pb-12 lg:px-8">
+      <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
         {/* Back */}
         <Link
           href="/candidate/jobs"
-          className={`mb-5 inline-flex items-center gap-2 text-sm font-medium transition sm:mb-7 ${
+          className={`inline-flex items-center gap-2 text-sm font-semibold ${
             darkMode
-              ? "text-slate-300 hover:text-white"
-              : "text-slate-600 hover:text-slate-950"
+              ? "text-slate-400 hover:text-white"
+              : "text-slate-500 hover:text-slate-900"
           }`}
         >
-          <ArrowLeft size={17} />
-          Back to job listings
+          <ArrowLeft size={16} />
+          Back to jobs
         </Link>
 
-        {/* Hero */}
+        {/* Error */}
+        {error && (
+          <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-400">
+            {error}
+          </div>
+        )}
+
+        {/* Job header */}
         <section
-          className={`overflow-hidden rounded-3xl border shadow-xl ${
+          className={`mt-6 rounded-3xl border p-6 shadow-sm sm:p-8 ${
             darkMode
-              ? "border-white/10 bg-white/[0.05] shadow-black/20"
-              : "border-slate-200 bg-white shadow-slate-200/60"
+              ? "border-white/10 bg-white/[0.04]"
+              : "border-slate-200 bg-white"
           }`}
         >
-          <div className="p-5 sm:p-7 lg:p-10">
-            <div className="flex flex-col gap-7 lg:flex-row lg:items-start lg:justify-between">
-              {/* Job identity */}
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 gap-4">
-                  {/* Logo */}
-                  <div
-                    className={`flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border sm:size-16 ${
-                      darkMode
-                        ? "border-white/10 bg-white/10"
-                        : "border-slate-200 bg-slate-50"
-                    }`}
-                  >
-                    {job.company?.logo_url ? (
-                      <img
-                        src={job.company.logo_url}
-                        alt={job.company.name}
-                        className="size-full object-cover"
-                      />
-                    ) : (
-                      <Building2
-                        size={25}
-                        className={
-                          darkMode
-                            ? "text-slate-400"
-                            : "text-slate-500"
-                        }
-                      />
-                    )}
-                  </div>
-
-                  <div className="min-w-0">
-                    <div className="mb-2 flex flex-wrap gap-2">
-                      <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
-                        Actively hiring
-                      </span>
-
-                      {job.experience_level && (
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                            darkMode
-                              ? "bg-white/10 text-slate-200"
-                              : "bg-slate-100 text-slate-700"
-                          }`}
-                        >
-                          {formatExperience(
-                            job.experience_level
-                          )}
-                        </span>
-                      )}
-                    </div>
-
-                    <h1 className="break-words text-2xl font-bold tracking-tight sm:text-3xl lg:text-4xl">
-                      {job.title}
-                    </h1>
-
-                    <div
-                      className={`mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm ${
-                        darkMode
-                          ? "text-slate-300"
-                          : "text-slate-600"
-                      }`}
-                    >
-                      {job.company && (
-                        <span className="flex items-center gap-1.5 font-semibold">
-                          <Building2 size={15} />
-                          {job.company.name}
-                        </span>
-                      )}
-
-                      {job.location && (
-                        <span className="flex items-center gap-1.5">
-                          <MapPin size={15} />
-                          {job.location}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 gap-4">
+              <div
+                className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${
+                  darkMode
+                    ? "bg-white/10"
+                    : "bg-slate-100"
+                }`}
+              >
+                <Building2 size={25} />
               </div>
 
-              {/* Desktop apply */}
-              <div className="w-full shrink-0 lg:w-auto">
-                <button
-                  type="button"
-                  onClick={handleApply}
-                  disabled={
-                    applying || alreadyApplied
-                  }
-                  className={`flex h-12 w-full items-center justify-center gap-2 rounded-xl px-7 text-sm font-semibold shadow-lg transition sm:w-auto ${
-                    alreadyApplied
-                      ? "cursor-default bg-emerald-500/10 text-emerald-700 shadow-none dark:text-emerald-400"
-                      : "bg-slate-900 text-white hover:-translate-y-0.5 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
+              <div className="min-w-0">
+                <h1 className="break-words text-2xl font-bold tracking-tight sm:text-3xl">
+                  {job.title}
+                </h1>
+
+                <p
+                  className={`mt-1 text-sm ${
+                    darkMode
+                      ? "text-slate-400"
+                      : "text-slate-500"
                   }`}
                 >
-                  {alreadyApplied ? (
-                    <>
-                      <CheckCircle2 size={17} />
-                      Applied
-                    </>
-                  ) : applying ? (
-                    "Submitting..."
-                  ) : (
-                    <>
-                      <Send size={17} />
-                      Apply now
-                    </>
-                  )}
-                </button>
+                  Recruitment Management System
+                </p>
               </div>
             </div>
 
-            {/* Stats */}
-            <div className="mt-7 grid grid-cols-2 gap-3 sm:mt-8 sm:grid-cols-4">
-              {/* Employment */}
-              <div
-                className={`rounded-2xl border p-4 ${
+            {/* APPLICATION STATUS */}
+            {application && (
+              <span
+                className={`inline-flex shrink-0 items-center gap-1.5 self-start rounded-full px-3 py-1.5 text-xs font-bold ${getStatusClasses(
+                  application.status,
                   darkMode
-                    ? "border-white/10 bg-white/[0.04]"
-                    : "border-slate-200 bg-slate-50"
+                )}`}
+              >
+                {application.status ===
+                "withdrawn" ? (
+                  <XCircle size={14} />
+                ) : application.status ===
+                  "selected" ||
+                  application.status ===
+                    "hired" ? (
+                  <CheckCircle2 size={14} />
+                ) : (
+                  <Clock3 size={14} />
+                )}
+
+                {getStatusLabel(
+                  application.status
+                )}
+              </span>
+            )}
+          </div>
+
+          {/* Metadata */}
+          <div
+            className={`mt-7 flex flex-wrap gap-x-6 gap-y-3 text-sm ${
+              darkMode
+                ? "text-slate-400"
+                : "text-slate-500"
+            }`}
+          >
+            {job.location && (
+              <div className="flex items-center gap-2">
+                <MapPin size={16} />
+                {job.location}
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <BriefcaseBusiness size={16} />
+              {formatEmploymentType(
+                job.employment_type
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <UserRound size={16} />
+              {formatExperience(
+                job.experience_level
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Clock3 size={16} />
+              Posted {formatDate(job.created_at)}
+            </div>
+          </div>
+
+          {/* Salary / deadline */}
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+            <div
+              className={`rounded-2xl p-4 ${
+                darkMode
+                  ? "bg-white/[0.04]"
+                  : "bg-slate-50"
+              }`}
+            >
+              <p
+                className={`text-xs ${
+                  darkMode
+                    ? "text-slate-500"
+                    : "text-slate-500"
                 }`}
               >
-                <BriefcaseBusiness
-                  size={17}
-                  className={
-                    darkMode
-                      ? "text-slate-400"
-                      : "text-slate-500"
-                  }
-                />
+                Salary
+              </p>
 
-                <p
-                  className={`mt-3 text-[11px] font-medium ${
-                    darkMode
-                      ? "text-slate-400"
-                      : "text-slate-500"
-                  }`}
-                >
-                  Employment
-                </p>
+              <p className="mt-1 text-sm font-bold">
+                {formatSalary(
+                  job.salary_min,
+                  job.salary_max
+                )}
+              </p>
+            </div>
 
-                <p className="mt-1 break-words text-sm font-semibold">
-                  {formatEmploymentType(
-                    job.employment_type
-                  )}
-                </p>
-              </div>
-
-              {/* Experience */}
-              <div
-                className={`rounded-2xl border p-4 ${
+            <div
+              className={`rounded-2xl p-4 ${
+                darkMode
+                  ? "bg-white/[0.04]"
+                  : "bg-slate-50"
+              }`}
+            >
+              <p
+                className={`text-xs ${
                   darkMode
-                    ? "border-white/10 bg-white/[0.04]"
-                    : "border-slate-200 bg-slate-50"
+                    ? "text-slate-500"
+                    : "text-slate-500"
                 }`}
               >
-                <Users
-                  size={17}
-                  className={
-                    darkMode
-                      ? "text-slate-400"
-                      : "text-slate-500"
-                  }
-                />
+                Application deadline
+              </p>
 
-                <p
-                  className={`mt-3 text-[11px] font-medium ${
-                    darkMode
-                      ? "text-slate-400"
-                      : "text-slate-500"
-                  }`}
-                >
-                  Experience
-                </p>
-
-                <p className="mt-1 break-words text-sm font-semibold">
-                  {formatExperience(
-                    job.experience_level
-                  )}
-                </p>
-              </div>
-
-              {/* Salary */}
-              <div
-                className={`rounded-2xl border p-4 ${
-                  darkMode
-                    ? "border-white/10 bg-white/[0.04]"
-                    : "border-slate-200 bg-slate-50"
-                }`}
-              >
-                <FileText
-                  size={17}
-                  className={
-                    darkMode
-                      ? "text-slate-400"
-                      : "text-slate-500"
-                  }
-                />
-
-                <p
-                  className={`mt-3 text-[11px] font-medium ${
-                    darkMode
-                      ? "text-slate-400"
-                      : "text-slate-500"
-                  }`}
-                >
-                  Salary
-                </p>
-
-                <p className="mt-1 break-words text-sm font-semibold">
-                  {formatSalary(
-                    job.salary_min,
-                    job.salary_max
-                  )}
-                </p>
-              </div>
-
-              {/* Deadline */}
-              <div
-                className={`rounded-2xl border p-4 ${
-                  darkMode
-                    ? "border-white/10 bg-white/[0.04]"
-                    : "border-slate-200 bg-slate-50"
-                }`}
-              >
-                <CalendarDays
-                  size={17}
-                  className={
-                    darkMode
-                      ? "text-slate-400"
-                      : "text-slate-500"
-                  }
-                />
-
-                <p
-                  className={`mt-3 text-[11px] font-medium ${
-                    darkMode
-                      ? "text-slate-400"
-                      : "text-slate-500"
-                  }`}
-                >
-                  Deadline
-                </p>
-
-                <p className="mt-1 break-words text-sm font-semibold">
-                  {formatDate(
-                    job.application_deadline
-                  )}
-                </p>
-              </div>
+              <p className="mt-1 text-sm font-bold">
+                {formatDate(
+                  job.application_deadline
+                )}
+              </p>
             </div>
           </div>
         </section>
 
-        {/* Alerts */}
-        {(error || success) && (
-          <div
-            className={`mt-5 rounded-2xl border px-4 py-3 text-sm font-medium ${
-              error
-                ? "border-red-500/20 bg-red-500/10 text-red-700 dark:text-red-400"
-                : "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+        {/* Main content */}
+        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          {/* Description */}
+          <section
+            className={`rounded-3xl border p-6 shadow-sm sm:p-8 ${
+              darkMode
+                ? "border-white/10 bg-white/[0.04]"
+                : "border-slate-200 bg-white"
             }`}
           >
-            {error || success}
-          </div>
-        )}
+            <div className="flex items-center gap-2">
+              <FileText size={19} />
 
-        {/* Main content */}
-        <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-          {/* Details */}
-          <div className="min-w-0 space-y-6">
-            {/* Description */}
-            <section
-              className={`rounded-3xl border p-5 shadow-sm sm:p-7 ${
+              <h2 className="text-lg font-bold">
+                Job description
+              </h2>
+            </div>
+
+            <div
+              className={`mt-5 whitespace-pre-wrap text-sm leading-7 ${
                 darkMode
-                  ? "border-white/10 bg-white/[0.04]"
-                  : "border-slate-200 bg-white"
+                  ? "text-slate-300"
+                  : "text-slate-600"
               }`}
             >
-              <h2 className="text-xl font-bold">
-                About the role
-              </h2>
+              {job.description}
+            </div>
+          </section>
 
-              <div
-                className={`mt-5 whitespace-pre-line text-sm leading-7 ${
-                  darkMode
-                    ? "text-slate-300"
-                    : "text-slate-700"
-                }`}
-              >
-                {job.description}
+          {/* Application panel */}
+          <aside
+            className={`h-fit rounded-3xl border p-5 shadow-sm sm:p-6 lg:sticky lg:top-6 ${
+              darkMode
+                ? "border-white/10 bg-white/[0.04]"
+                : "border-slate-200 bg-white"
+            }`}
+          >
+            <h2 className="font-bold">
+              Your application
+            </h2>
+
+            {profile && (
+              <div className="mt-4">
+                <p className="text-sm font-semibold">
+                  {profile.full_name ||
+                    profile.email ||
+                    "Candidate"}
+                </p>
+
+                {profile.email && (
+                  <p
+                    className={`mt-1 text-xs ${
+                      darkMode
+                        ? "text-slate-400"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    {profile.email}
+                  </p>
+                )}
               </div>
-            </section>
-
-            {/* Responsibilities */}
-            {job.responsibilities && (
-              <section
-                className={`rounded-3xl border p-5 shadow-sm sm:p-7 ${
-                  darkMode
-                    ? "border-white/10 bg-white/[0.04]"
-                    : "border-slate-200 bg-white"
-                }`}
-              >
-                <h2 className="text-xl font-bold">
-                  Responsibilities
-                </h2>
-
-                <div
-                  className={`mt-5 whitespace-pre-line text-sm leading-7 ${
-                    darkMode
-                      ? "text-slate-300"
-                      : "text-slate-700"
-                  }`}
-                >
-                  {job.responsibilities}
-                </div>
-              </section>
             )}
 
-            {/* Requirements */}
-            {job.requirements && (
-              <section
-                className={`rounded-3xl border p-5 shadow-sm sm:p-7 ${
-                  darkMode
-                    ? "border-white/10 bg-white/[0.04]"
-                    : "border-slate-200 bg-white"
-                }`}
-              >
-                <h2 className="text-xl font-bold">
-                  Requirements
-                </h2>
-
+            {/* -----------------------------------------
+                NO APPLICATION
+            ------------------------------------------ */}
+            {!application && (
+              <>
                 <div
-                  className={`mt-5 whitespace-pre-line text-sm leading-7 ${
+                  className={`mt-5 rounded-2xl p-4 ${
                     darkMode
-                      ? "text-slate-300"
-                      : "text-slate-700"
+                      ? "bg-white/[0.04]"
+                      : "bg-slate-50"
                   }`}
                 >
-                  {job.requirements}
+                  <div className="flex gap-3">
+                    <Send
+                      size={18}
+                      className="mt-0.5 shrink-0 text-cyan-600"
+                    />
+
+                    <p
+                      className={`text-xs leading-5 ${
+                        darkMode
+                          ? "text-slate-400"
+                          : "text-slate-600"
+                      }`}
+                    >
+                      You have not applied for this
+                      position yet.
+                    </p>
+                  </div>
                 </div>
-              </section>
+
+                <button
+                  type="button"
+                  onClick={handleApply}
+                  disabled={actionLoading}
+                  className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 text-sm font-bold text-white shadow-lg transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
+                >
+                  <Send size={17} />
+
+                  {actionLoading
+                    ? "Applying..."
+                    : "Apply now"}
+                </button>
+              </>
             )}
-          </div>
 
-          {/* Sidebar */}
-          <aside className="min-w-0 space-y-6">
-            {/* Job overview */}
-            <section
-              className={`rounded-3xl border p-5 shadow-sm sm:p-6 ${
-                darkMode
-                  ? "border-white/10 bg-white/[0.04]"
-                  : "border-slate-200 bg-white"
-              }`}
-            >
-              <h2 className="font-bold">
-                Job overview
-              </h2>
+            {/* -----------------------------------------
+                WITHDRAWN
+            ------------------------------------------ */}
+            {isWithdrawn && (
+              <>
+                <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-400/20 dark:bg-red-400/10">
+                  <div className="flex gap-3">
+                    <XCircle className="mt-0.5 shrink-0 text-red-600 dark:text-red-400" size={19} />
 
-              <div className="mt-5 space-y-5">
-                {/* Location */}
-                <div className="flex gap-3">
-                  <div
-                    className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${
-                      darkMode
-                        ? "bg-white/10 text-slate-300"
-                        : "bg-slate-100 text-slate-600"
-                    }`}
-                  >
-                    <MapPin size={16} />
-                  </div>
+                    <div>
+                      <p className="text-sm font-bold text-red-700 dark:text-red-400">
+                        Application withdrawn
+                      </p>
 
-                  <div className="min-w-0">
-                    <p
-                      className={`text-xs font-medium ${
-                        darkMode
-                          ? "text-slate-400"
-                          : "text-slate-500"
-                      }`}
-                    >
-                      Location
-                    </p>
-
-                    <p className="mt-1 break-words text-sm font-medium">
-                      {job.location ||
-                        "Not specified"}
-                    </p>
+                      <p className="mt-1 text-xs leading-5 text-red-600/80 dark:text-red-400/80">
+                        You withdrew your application
+                        for this position. You can
+                        reapply if you want to be
+                        considered again.
+                      </p>
+                    </div>
                   </div>
                 </div>
 
-                {/* Employment */}
-                <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleReapply}
+                  disabled={actionLoading}
+                  className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 text-sm font-bold text-white shadow-lg transition hover:-translate-y-0.5 hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Send size={17} />
+
+                  {actionLoading
+                    ? "Reapplying..."
+                    : "Reapply"}
+                </button>
+              </>
+            )}
+
+            {/* -----------------------------------------
+                ACTIVE APPLICATION
+            ------------------------------------------ */}
+            {application &&
+              !isWithdrawn &&
+              application.status !==
+                "rejected" &&
+              application.status !== "hired" && (
+                <>
                   <div
-                    className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${
+                    className={`mt-5 rounded-2xl p-4 ${
                       darkMode
-                        ? "bg-white/10 text-slate-300"
-                        : "bg-slate-100 text-slate-600"
+                        ? "bg-emerald-400/10"
+                        : "bg-emerald-50"
                     }`}
                   >
-                    <Clock3 size={16} />
-                  </div>
-
-                  <div className="min-w-0">
-                    <p
-                      className={`text-xs font-medium ${
-                        darkMode
-                          ? "text-slate-400"
-                          : "text-slate-500"
-                      }`}
-                    >
-                      Employment type
-                    </p>
-
-                    <p className="mt-1 text-sm font-medium">
-                      {formatEmploymentType(
-                        job.employment_type
-                      )}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Deadline */}
-                <div className="flex gap-3">
-                  <div
-                    className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${
-                      darkMode
-                        ? "bg-white/10 text-slate-300"
-                        : "bg-slate-100 text-slate-600"
-                    }`}
-                  >
-                    <CalendarDays size={16} />
-                  </div>
-
-                  <div className="min-w-0">
-                    <p
-                      className={`text-xs font-medium ${
-                        darkMode
-                          ? "text-slate-400"
-                          : "text-slate-500"
-                      }`}
-                    >
-                      Application deadline
-                    </p>
-
-                    <p className="mt-1 text-sm font-medium">
-                      {formatDate(
-                        job.application_deadline
-                      )}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* Company */}
-            {job.company && (
-              <section
-                className={`rounded-3xl border p-5 shadow-sm sm:p-6 ${
-                  darkMode
-                    ? "border-white/10 bg-white/[0.04]"
-                    : "border-slate-200 bg-white"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl border ${
-                      darkMode
-                        ? "border-white/10 bg-white/10"
-                        : "border-slate-200 bg-slate-50"
-                    }`}
-                  >
-                    {job.company.logo_url ? (
-                      <img
-                        src={job.company.logo_url}
-                        alt={job.company.name}
-                        className="size-full object-cover"
-                      />
-                    ) : (
-                      <Building2
+                    <div className="flex gap-3">
+                      <CheckCircle2
                         size={19}
-                        className={
-                          darkMode
-                            ? "text-slate-400"
-                            : "text-slate-500"
-                        }
+                        className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"
                       />
-                    )}
+
+                      <div>
+                        <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400">
+                          Application submitted
+                        </p>
+
+                        <p
+                          className={`mt-1 text-xs leading-5 ${
+                            darkMode
+                              ? "text-emerald-400/70"
+                              : "text-emerald-700/70"
+                          }`}
+                        >
+                          Your application is
+                          currently{" "}
+                          {getStatusLabel(
+                            application.status
+                          ).toLowerCase()}
+                          .
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="min-w-0">
-                    <p
-                      className={`text-xs font-medium ${
+                  {canWithdraw && (
+                    <button
+                      type="button"
+                      onClick={handleWithdraw}
+                      disabled={actionLoading}
+                      className={`mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl border text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
                         darkMode
-                          ? "text-slate-400"
-                          : "text-slate-500"
+                          ? "border-red-400/20 text-red-400 hover:bg-red-400/10"
+                          : "border-red-200 text-red-600 hover:bg-red-50"
                       }`}
                     >
-                      Company
+                      <XCircle size={16} />
+
+                      {actionLoading
+                        ? "Processing..."
+                        : "Withdraw application"}
+                    </button>
+                  )}
+                </>
+              )}
+
+            {/* -----------------------------------------
+                REJECTED
+            ------------------------------------------ */}
+            {application?.status ===
+              "rejected" && (
+              <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-400/20 dark:bg-red-400/10">
+                <div className="flex gap-3">
+                  <XCircle
+                    size={19}
+                    className="mt-0.5 shrink-0 text-red-600 dark:text-red-400"
+                  />
+
+                  <div>
+                    <p className="text-sm font-bold text-red-700 dark:text-red-400">
+                      Application rejected
                     </p>
 
-                    <h2 className="truncate font-bold">
-                      {job.company.name}
-                    </h2>
+                    <p className="mt-1 text-xs leading-5 text-red-600/80 dark:text-red-400/80">
+                      Your application for this
+                      position has been rejected.
+                    </p>
                   </div>
                 </div>
-
-                {job.company.industry && (
-                  <p
-                    className={`mt-4 text-sm font-medium ${
-                      darkMode
-                        ? "text-slate-300"
-                        : "text-slate-600"
-                    }`}
-                  >
-                    {job.company.industry}
-                  </p>
-                )}
-
-                {job.company.location && (
-                  <p
-                    className={`mt-2 flex items-center gap-1.5 text-sm ${
-                      darkMode
-                        ? "text-slate-400"
-                        : "text-slate-600"
-                    }`}
-                  >
-                    <MapPin size={14} />
-                    {job.company.location}
-                  </p>
-                )}
-
-                {job.company.description && (
-                  <p
-                    className={`mt-4 text-sm leading-6 ${
-                      darkMode
-                        ? "text-slate-300"
-                        : "text-slate-600"
-                    }`}
-                  >
-                    {job.company.description}
-                  </p>
-                )}
-
-                {job.company.website_url && (
-                  <a
-                    href={job.company.website_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`mt-5 flex h-10 items-center justify-center gap-2 rounded-xl border text-sm font-semibold transition ${
-                      darkMode
-                        ? "border-white/10 text-slate-200 hover:bg-white/10"
-                        : "border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-slate-950"
-                    }`}
-                  >
-                    Company website
-                    <ExternalLink size={14} />
-                  </a>
-                )}
-              </section>
+              </div>
             )}
 
-            {/* Security notice */}
-            <section
-              className={`rounded-3xl border p-5 ${
-                darkMode
-                  ? "border-cyan-400/10 bg-cyan-400/[0.04]"
-                  : "border-cyan-200 bg-cyan-50"
-              }`}
-            >
-              <div className="flex gap-3">
-                <ShieldCheck
-                  size={20}
-                  className="shrink-0 text-cyan-700 dark:text-cyan-400"
-                />
+            {/* -----------------------------------------
+                HIRED
+            ------------------------------------------ */}
+            {application?.status ===
+              "hired" && (
+              <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-400/20 dark:bg-emerald-400/10">
+                <div className="flex gap-3">
+                  <CheckCircle2
+                    size={19}
+                    className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"
+                  />
 
-                <div>
-                  <h3 className="text-sm font-semibold">
-                    Safe application
-                  </h3>
+                  <div>
+                    <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400">
+                      Hired
+                    </p>
 
-                  <p
-                    className={`mt-1 text-xs leading-5 ${
-                      darkMode
-                        ? "text-slate-400"
-                        : "text-slate-600"
-                    }`}
-                  >
-                    Your application information is
-                    securely stored and only shared
-                    with authorized recruiters.
-                  </p>
+                    <p className="mt-1 text-xs leading-5 text-emerald-700/70 dark:text-emerald-400/70">
+                      Congratulations! You have
+                      been hired for this position.
+                    </p>
+                  </div>
                 </div>
               </div>
-            </section>
+            )}
           </aside>
         </div>
-      </div>
-
-      {/* Mobile sticky application bar */}
-      <div
-        className={`fixed inset-x-0 bottom-0 z-40 border-t p-3 backdrop-blur-xl lg:hidden ${
-          darkMode
-            ? "border-white/10 bg-[#070a10]/90"
-            : "border-slate-200 bg-white/95"
-        }`}
-      >
-        <button
-          type="button"
-          onClick={handleApply}
-          disabled={applying || alreadyApplied}
-          className={`flex h-12 w-full items-center justify-center gap-2 rounded-xl text-sm font-semibold shadow-lg ${
-            alreadyApplied
-              ? "bg-emerald-500 text-white"
-              : "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-          }`}
-        >
-          {alreadyApplied ? (
-            <>
-              <CheckCircle2 size={17} />
-              Application submitted
-            </>
-          ) : applying ? (
-            "Submitting..."
-          ) : (
-            <>
-              <Send size={17} />
-              Apply for this position
-            </>
-          )}
-        </button>
       </div>
     </main>
   );
 }
-

@@ -625,35 +625,7 @@ export default function CandidateProfilePage() {
             : "bg-[#f4f7fb] text-slate-900"
         }`}
       >
-        <header
-          className={`border-b ${
-            darkMode
-              ? "border-white/10 bg-[#070a10]"
-              : "border-slate-200 bg-white"
-          }`}
-        >
-          <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center gap-2.5">
-              <div className="flex size-9 items-center justify-center rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900">
-                <BriefcaseBusiness size={18} />
-              </div>
-              <span className="text-sm font-bold">RMS</span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setDarkMode((value) => !value)}
-              className={`flex size-10 items-center justify-center rounded-full border ${
-                darkMode
-                  ? "border-white/10 bg-white/10 text-white"
-                  : "border-slate-200 bg-white text-slate-700"
-              }`}
-              aria-label="Toggle theme"
-            >
-              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-          </div>
-        </header>
+  
 
         <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
           <div className="h-8 w-48 animate-pulse rounded-lg bg-slate-200 dark:bg-white/10" />
@@ -727,60 +699,6 @@ export default function CandidateProfilePage() {
         }`}
       />
 
-      {/* Header */}
-      <header
-        className={`sticky top-0 z-30 border-b backdrop-blur-xl ${
-          darkMode
-            ? "border-white/10 bg-[#070a10]/90"
-            : "border-slate-200 bg-white/95"
-        }`}
-      >
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
-          <Link
-            href="/candidate/dashboard"
-            className="flex items-center gap-2.5"
-          >
-            <div className="flex size-9 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900">
-              <BriefcaseBusiness size={18} />
-            </div>
-
-            <span className="text-sm font-bold sm:text-base">
-              RMS
-            </span>
-          </Link>
-
-          <div className="flex items-center gap-2">
-            <Link
-              href="/candidate/dashboard"
-              className={`hidden h-10 items-center gap-2 rounded-xl px-3 text-sm font-medium sm:flex ${
-                darkMode
-                  ? "text-slate-300 hover:bg-white/10 hover:text-white"
-                  : "text-slate-700 hover:bg-slate-100 hover:text-slate-950"
-              }`}
-            >
-              <ArrowLeft size={16} />
-              Dashboard
-            </Link>
-
-            <button
-              type="button"
-              onClick={() => setDarkMode((value) => !value)}
-              className={`flex size-10 items-center justify-center rounded-full border shadow-sm ${
-                darkMode
-                  ? "border-white/10 bg-white/10 text-white hover:bg-white/15"
-                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-              aria-label="Toggle theme"
-            >
-              {darkMode ? (
-                <Sun size={18} />
-              ) : (
-                <Moon size={18} />
-              )}
-            </button>
-          </div>
-        </div>
-      </header>
 
       {/* Content */}
       <div className="relative z-10 mx-auto max-w-6xl px-4 py-6 pb-12 sm:px-6 sm:py-8 lg:px-8">

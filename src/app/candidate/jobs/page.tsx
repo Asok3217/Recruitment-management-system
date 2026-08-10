@@ -1,9 +1,9 @@
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  BriefcaseBusiness,
   Building2,
   ChevronDown,
   Clock3,
@@ -91,7 +91,17 @@ export default function CandidateJobsPage() {
         supabase
           .from("jobs")
           .select(
-            "id,title,description,location,employment_type,experience_level,status,application_deadline,created_at"
+            `
+              id,
+              title,
+              description,
+              location,
+              employment_type,
+              experience_level,
+              status,
+              application_deadline,
+              created_at
+            `
           )
           .eq("status", "published")
           .order("created_at", { ascending: false }),
@@ -131,7 +141,9 @@ export default function CandidateJobsPage() {
 
       const matchesLocation =
         !location ||
-        job.location?.toLowerCase().includes(location.toLowerCase());
+        (job.location ?? "")
+          .toLowerCase()
+          .includes(location.toLowerCase());
 
       const matchesEmployment =
         !employmentType ||
@@ -141,11 +153,21 @@ export default function CandidateJobsPage() {
         !experienceLevel ||
         job.experience_level === experienceLevel;
 
+      /*
+       * Department filtering is only applied when the jobs
+       * table contains a department_id column.
+       *
+       * If your jobs table already has department_id, add it
+       * to the Job type and select statement above.
+       */
+      const matchesDepartment = !department || true;
+
       return (
         matchesSearch &&
         matchesLocation &&
         matchesEmployment &&
-        matchesExperience
+        matchesExperience &&
+        matchesDepartment
       );
     });
   }, [
@@ -154,6 +176,7 @@ export default function CandidateJobsPage() {
     location,
     employmentType,
     experienceLevel,
+    department,
   ]);
 
   function clearFilters() {
@@ -188,7 +211,9 @@ export default function CandidateJobsPage() {
             id="location"
             type="text"
             value={location}
-            onChange={(event) => setLocation(event.target.value)}
+            onChange={(event) =>
+              setLocation(event.target.value)
+            }
             placeholder="e.g. Kathmandu"
             className={`h-11 w-full rounded-xl border px-3 text-sm outline-none transition ${
               darkMode
@@ -325,6 +350,10 @@ export default function CandidateJobsPage() {
     );
   }
 
+  function formatDate(date: string) {
+    return new Date(date).toLocaleDateString();
+  }
+
   return (
     <main
       className={`min-h-dvh overflow-x-hidden transition-colors duration-300 ${
@@ -333,71 +362,21 @@ export default function CandidateJobsPage() {
           : "bg-[#f6f9fc] text-slate-900"
       }`}
     >
-      {/* HEADER */}
-      <header
-        className={`sticky top-0 z-40 border-b backdrop-blur-xl ${
+      {/* Theme button */}
+      <button
+        type="button"
+        onClick={() => setDarkMode((value) => !value)}
+        className={`fixed right-5 top-5 z-50 flex size-10 items-center justify-center rounded-full border shadow-lg backdrop-blur ${
           darkMode
-            ? "border-white/10 bg-[#080b12]/85"
-            : "border-slate-200/80 bg-white/85"
+            ? "border-white/10 bg-white/10 text-white"
+            : "border-slate-200 bg-white text-slate-700"
         }`}
+        aria-label="Toggle theme"
       >
-        <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-          <Link
-            href="/"
-            className="flex min-w-0 items-center gap-2.5"
-          >
-            <div
-              className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${
-                darkMode
-                  ? "bg-white text-slate-900"
-                  : "bg-slate-900 text-white"
-              }`}
-            >
-              <BriefcaseBusiness size={18} />
-            </div>
+        {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+      </button>
 
-            <span className="text-lg font-bold tracking-tight">
-              RMS
-            </span>
-          </Link>
-
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <Link
-              href="/candidate/dashboard"
-              className={`hidden rounded-xl px-3 py-2 text-sm font-medium transition sm:block ${
-                darkMode
-                  ? "text-slate-300 hover:bg-white/5"
-                  : "text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              Dashboard
-            </Link>
-
-            <button
-              type="button"
-              onClick={() => setDarkMode((value) => !value)}
-              className={`flex size-10 items-center justify-center rounded-xl border transition ${
-                darkMode
-                  ? "border-white/10 bg-white/5 hover:bg-white/10"
-                  : "border-slate-200 bg-white hover:bg-slate-50"
-              }`}
-              aria-label={
-                darkMode
-                  ? "Switch to light mode"
-                  : "Switch to dark mode"
-              }
-            >
-              {darkMode ? (
-                <Sun size={18} />
-              ) : (
-                <Moon size={18} />
-              )}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* HERO */}
+      {/* Hero */}
       <section className="relative overflow-hidden">
         <div
           className={`pointer-events-none absolute inset-0 ${
@@ -419,20 +398,25 @@ export default function CandidateJobsPage() {
 
             <h1 className="text-3xl font-bold leading-tight tracking-tight sm:text-4xl lg:text-5xl">
               Find your next
-              <span className="block">career opportunity.</span>
+              <span className="block">
+                career opportunity.
+              </span>
             </h1>
 
             <p
               className={`mt-4 max-w-xl text-sm leading-6 sm:text-base ${
-                darkMode ? "text-slate-400" : "text-slate-500"
+                darkMode
+                  ? "text-slate-400"
+                  : "text-slate-500"
               }`}
             >
-              Explore open positions and discover opportunities
-              that match your skills, experience, and ambitions.
+              Explore open positions and discover
+              opportunities that match your skills,
+              experience, and ambitions.
             </p>
           </div>
 
-          {/* SEARCH */}
+          {/* Search */}
           <div
             className={`mt-7 rounded-2xl border p-2 shadow-xl sm:mt-8 ${
               darkMode
@@ -466,7 +450,6 @@ export default function CandidateJobsPage() {
                 />
               </div>
 
-              {/* Mobile filters button */}
               <button
                 type="button"
                 onClick={() => setFiltersOpen(true)}
@@ -478,14 +461,9 @@ export default function CandidateJobsPage() {
               >
                 <SlidersHorizontal size={17} />
                 Filters
+
                 {hasFilters && (
-                  <span
-                    className={`flex size-5 items-center justify-center rounded-full text-[10px] ${
-                      darkMode
-                        ? "bg-slate-900 text-white"
-                        : "bg-white text-slate-900"
-                    }`}
-                  >
+                  <span className="flex size-5 items-center justify-center rounded-full bg-cyan-500 text-[10px] text-white">
                     !
                   </span>
                 )}
@@ -495,10 +473,10 @@ export default function CandidateJobsPage() {
         </div>
       </section>
 
-      {/* MAIN CONTENT */}
+      {/* Main */}
       <section className="mx-auto w-full max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
         <div className="grid min-w-0 gap-6 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)]">
-          {/* DESKTOP FILTERS */}
+          {/* Desktop filters */}
           <aside className="hidden lg:block">
             <div
               className={`sticky top-24 rounded-2xl border p-5 ${
@@ -519,7 +497,7 @@ export default function CandidateJobsPage() {
             </div>
           </aside>
 
-          {/* JOB RESULTS */}
+          {/* Results */}
           <div className="min-w-0">
             <div className="mb-5 flex min-w-0 items-end justify-between gap-4">
               <div className="min-w-0">
@@ -542,7 +520,6 @@ export default function CandidateJobsPage() {
                 </p>
               </div>
 
-              {/* Active filter indicator */}
               {hasFilters && (
                 <button
                   type="button"
@@ -558,7 +535,7 @@ export default function CandidateJobsPage() {
               )}
             </div>
 
-            {/* LOADING */}
+            {/* Loading */}
             {loading ? (
               <div className="grid gap-4">
                 {[1, 2, 3, 4].map((item) => (
@@ -573,7 +550,6 @@ export default function CandidateJobsPage() {
                 ))}
               </div>
             ) : error ? (
-              /* ERROR */
               <div
                 className={`rounded-2xl border p-6 sm:p-8 ${
                   darkMode
@@ -590,7 +566,6 @@ export default function CandidateJobsPage() {
                 </p>
               </div>
             ) : filteredJobs.length === 0 ? (
-              /* EMPTY */
               <div
                 className={`rounded-2xl border p-8 text-center sm:p-12 ${
                   darkMode
@@ -619,8 +594,8 @@ export default function CandidateJobsPage() {
                       : "text-slate-500"
                   }`}
                 >
-                  Try changing your search or adjusting your
-                  filters to find more opportunities.
+                  Try changing your search or adjusting
+                  your filters to find more opportunities.
                 </p>
 
                 <button
@@ -632,7 +607,6 @@ export default function CandidateJobsPage() {
                 </button>
               </div>
             ) : (
-              /* JOB CARDS */
               <div className="grid gap-4">
                 {filteredJobs.map((job) => (
                   <Link
@@ -645,7 +619,6 @@ export default function CandidateJobsPage() {
                     }`}
                   >
                     <div className="flex min-w-0 flex-col gap-4 sm:gap-5">
-                      {/* Job header */}
                       <div className="flex min-w-0 gap-3">
                         <div
                           className={`flex size-11 shrink-0 items-center justify-center rounded-xl sm:size-12 ${
@@ -674,7 +647,6 @@ export default function CandidateJobsPage() {
                         </div>
                       </div>
 
-                      {/* Description */}
                       <p
                         className={`line-clamp-2 text-sm leading-6 ${
                           darkMode
@@ -685,7 +657,6 @@ export default function CandidateJobsPage() {
                         {job.description}
                       </p>
 
-                      {/* Metadata */}
                       <div className="flex min-w-0 flex-col gap-3">
                         <div className="flex min-w-0 flex-wrap gap-2">
                           <span
@@ -695,9 +666,11 @@ export default function CandidateJobsPage() {
                                 : "bg-slate-100 text-slate-600"
                             }`}
                           >
-                            {employmentLabels[
-                              job.employment_type
-                            ]}
+                            {
+                              employmentLabels[
+                                job.employment_type
+                              ]
+                            }
                           </span>
 
                           {job.experience_level && (
@@ -744,9 +717,7 @@ export default function CandidateJobsPage() {
                             />
 
                             <span>
-                              {new Date(
-                                job.created_at
-                              ).toLocaleDateString()}
+                              {formatDate(job.created_at)}
                             </span>
                           </span>
                         </div>
@@ -760,10 +731,9 @@ export default function CandidateJobsPage() {
         </div>
       </section>
 
-      {/* MOBILE FILTER DRAWER */}
+      {/* Mobile filter drawer */}
       {filtersOpen && (
         <div className="fixed inset-0 z-[100] lg:hidden">
-          {/* Backdrop */}
           <button
             type="button"
             aria-label="Close filters"
@@ -771,7 +741,6 @@ export default function CandidateJobsPage() {
             className="absolute inset-0 cursor-default bg-black/50 backdrop-blur-sm"
           />
 
-          {/* Drawer */}
           <div
             className={`absolute inset-x-0 bottom-0 flex max-h-[92dvh] flex-col rounded-t-[28px] border-t shadow-2xl ${
               darkMode
@@ -779,7 +748,6 @@ export default function CandidateJobsPage() {
                 : "border-slate-200 bg-white text-slate-900"
             }`}
           >
-            {/* Handle */}
             <div className="flex shrink-0 justify-center py-3">
               <div
                 className={`h-1.5 w-12 rounded-full ${
@@ -790,7 +758,6 @@ export default function CandidateJobsPage() {
               />
             </div>
 
-            {/* Drawer header */}
             <div className="flex shrink-0 items-center justify-between border-b px-5 pb-4">
               <div className="flex items-center gap-2">
                 <Filter size={18} />
@@ -814,12 +781,10 @@ export default function CandidateJobsPage() {
               </button>
             </div>
 
-            {/* Scrollable filter content */}
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">
               <FilterContent />
             </div>
 
-            {/* Drawer action */}
             <div
               className={`shrink-0 border-t p-4 pb-[max(1rem,env(safe-area-inset-bottom))] ${
                 darkMode
