@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -56,9 +55,7 @@ function formatEmploymentType(value: string | null) {
 
   return value
     .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) =>
-      letter.toUpperCase()
-    );
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function formatExperience(value: string | null) {
@@ -66,15 +63,10 @@ function formatExperience(value: string | null) {
 
   return value
     .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) =>
-      letter.toUpperCase()
-    );
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function formatSalary(
-  min: number | null,
-  max: number | null
-) {
+function formatSalary(min: number | null, max: number | null) {
   if (min !== null && max !== null) {
     return `NPR ${min.toLocaleString()} – ${max.toLocaleString()}`;
   }
@@ -104,48 +96,31 @@ function getStatusLabel(status: string) {
   switch (status) {
     case "applied":
       return "Applied";
-
     case "screening":
       return "Screening";
-
     case "shortlisted":
       return "Shortlisted";
-
     case "interview":
       return "Interview";
-
     case "selected":
       return "Selected";
-
     case "offer_sent":
       return "Offer Sent";
-
     case "hired":
       return "Hired";
-
     case "rejected":
       return "Rejected";
-
     case "withdrawn":
       return "Withdrawn";
-
     default:
       return status
         .replace(/_/g, " ")
-        .replace(/\b\w/g, (letter) =>
-          letter.toUpperCase()
-        );
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
 }
 
-function getStatusClasses(
-  status: string,
-  darkMode: boolean
-) {
-  if (
-    status === "selected" ||
-    status === "hired"
-  ) {
+function getStatusClasses(status: string, darkMode: boolean) {
+  if (status === "selected" || status === "hired") {
     return darkMode
       ? "bg-emerald-400/10 text-emerald-400"
       : "bg-emerald-50 text-emerald-700";
@@ -161,10 +136,7 @@ function getStatusClasses(
       : "bg-blue-50 text-blue-700";
   }
 
-  if (
-    status === "rejected" ||
-    status === "withdrawn"
-  ) {
+  if (status === "rejected" || status === "withdrawn") {
     return darkMode
       ? "bg-red-400/10 text-red-400"
       : "bg-red-50 text-red-700";
@@ -182,22 +154,13 @@ function getStatusClasses(
 }
 
 export default function CandidateJobDetailsPage() {
-  const params = useParams();
+  const params = useParams<{ id: string | string[] }>();
   const router = useRouter();
   const supabase = createClient();
 
-  /*
-   * IMPORTANT:
-   *
-   * This is the only place where we read the dynamic route ID.
-   *
-   * /candidate/jobs/page.tsx does NOT have params.id.
-   *
-   * /candidate/jobs/[id]/page.tsx DOES have params.id.
-   */
   const rawId = params?.id;
 
-  const jobId =
+  const routeJobId: string | undefined =
     typeof rawId === "string"
       ? rawId
       : Array.isArray(rawId)
@@ -205,177 +168,114 @@ export default function CandidateJobDetailsPage() {
         : undefined;
 
   const [job, setJob] = useState<Job | null>(null);
-  const [application, setApplication] =
-    useState<Application | null>(null);
-  const [profile, setProfile] =
-    useState<Profile | null>(null);
+  const [application, setApplication] = useState<Application | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
 
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] =
-    useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState("");
-
   const [darkMode, setDarkMode] = useState(false);
 
-  /*
-   * ----------------------------------------------------
-   * LOAD JOB + APPLICATION
-   * ----------------------------------------------------
-   */
   useEffect(() => {
-    if (!jobId) {
+    if (!routeJobId) {
       setLoading(false);
       setError("Job ID is missing.");
       return;
     }
 
-    async function loadJob() {
+    async function loadJob(jobId: string) {
       setLoading(true);
       setError("");
 
       try {
-        /*
-         * Get logged-in user
-         */
         const {
           data: { user },
           error: userError,
         } = await supabase.auth.getUser();
 
-        if (userError) {
-          throw userError;
-        }
+        if (userError) throw userError;
 
         if (!user) {
           router.push("/auth/login");
           return;
         }
 
-        /*
-         * Get profile
-         */
-        const { data: profileData } =
-          await supabase
-            .from("profiles")
-            .select(
-              "id,full_name,email,phone"
-            )
-            .eq("id", user.id)
-            .maybeSingle();
+        const { data: profileData, error: profileError } = await supabase
+          .from("profiles")
+          .select("id,full_name,email,phone")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profileError) throw profileError;
 
         if (profileData) {
           setProfile(profileData as Profile);
         }
 
-        /*
-         * Get job
-         */
-        const { data: jobData, error: jobError } =
-          await supabase
-            .from("jobs")
-            .select(
-              `
-                id,
-                title,
-                description,
-                location,
-                employment_type,
-                experience_level,
-                salary_min,
-                salary_max,
-                application_deadline,
-                status,
-                created_at
-              `
-            )
-            .eq("id", jobId)
-            .maybeSingle();
+        const { data: jobData, error: jobError } = await supabase
+          .from("jobs")
+          .select(
+            `
+              id,
+              title,
+              description,
+              location,
+              employment_type,
+              experience_level,
+              salary_min,
+              salary_max,
+              application_deadline,
+              status,
+              created_at
+            `,
+          )
+          .eq("id", jobId)
+          .maybeSingle();
 
-        if (jobError) {
-          throw jobError;
-        }
+        if (jobError) throw jobError;
 
         if (!jobData) {
           setJob(null);
+          setApplication(null);
           setError("This job could not be found.");
           return;
         }
 
         setJob(jobData as Job);
 
-        /*
-         * ------------------------------------------------
-         * IMPORTANT:
-         *
-         * We deliberately DO NOT filter by status here.
-         *
-         * Therefore:
-         *
-         * applied    -> found
-         * screening  -> found
-         * shortlisted -> found
-         * interview  -> found
-         * rejected   -> found
-         * withdrawn  -> FOUND
-         *
-         * This is what allows the page to display
-         * "Withdrawn" instead of incorrectly displaying
-         * "Apply".
-         * ------------------------------------------------
-         */
-        const {
-          data: applicationData,
-          error: applicationError,
-        } = await supabase
-          .from("applications")
-          .select(
-            `
-              id,
-              job_id,
-              candidate_id,
-              status,
-              applied_at,
-              updated_at
-            `
-          )
-          .eq("job_id", jobId)
-          .eq("candidate_id", user.id)
-          .maybeSingle();
+        const { data: applicationData, error: applicationError } =
+          await supabase
+            .from("applications")
+            .select(
+              `
+                id,
+                job_id,
+                candidate_id,
+                status,
+                applied_at,
+                updated_at
+              `,
+            )
+            .eq("job_id", jobId)
+            .eq("candidate_id", user.id)
+            .maybeSingle();
 
-        if (applicationError) {
-          throw applicationError;
-        }
+        if (applicationError) throw applicationError;
 
-        setApplication(
-          applicationData as Application | null
-        );
+        setApplication(applicationData as Application | null);
       } catch (err) {
         console.error(err);
-
-        setError(
-          "Unable to load this job. Please try again."
-        );
+        setError("Unable to load this job. Please try again.");
       } finally {
         setLoading(false);
       }
     }
 
-    loadJob();
-  }, [jobId, router, supabase]);
+    void loadJob(routeJobId);
+  }, [routeJobId, router, supabase]);
 
-  /*
-   * ----------------------------------------------------
-   * APPLY
-   * ----------------------------------------------------
-   *
-   * This is used only when the candidate has NO
-   * existing application row.
-   *
-   * If an application exists with status withdrawn,
-   * we use REAPPLY instead.
-   */
   async function handleApply() {
-    if (!jobId) {
+    if (!routeJobId) {
       setError("Job ID is missing.");
       return;
     }
@@ -389,80 +289,16 @@ export default function CandidateJobDetailsPage() {
         error: userError,
       } = await supabase.auth.getUser();
 
-      if (userError) {
-        throw userError;
-      }
+      if (userError) throw userError;
 
       if (!user) {
         router.push("/auth/login");
         return;
       }
 
-      /*
-       * Safety check.
-       *
-       * Before inserting a new application, check again
-       * whether an application already exists.
-       */
-      const {
-        data: existingApplication,
-        error: existingError,
-      } = await supabase
-        .from("applications")
-        .select(
-          `
-            id,
-            job_id,
-            candidate_id,
-            status,
-            applied_at,
-            updated_at
-          `
-        )
-        .eq("job_id", jobId)
-        .eq("candidate_id", user.id)
-        .maybeSingle();
-
-      if (existingError) {
-        throw existingError;
-      }
-
-      /*
-       * If withdrawn, reapply instead of inserting.
-       */
-      if (
-        existingApplication &&
-        existingApplication.status ===
-          "withdrawn"
-      ) {
-        await handleReapplyInternal(
-          existingApplication.id
-        );
-        return;
-      }
-
-      /*
-       * If any other application exists, do not create
-       * another application.
-       */
-      if (existingApplication) {
-        setApplication(
-          existingApplication as Application
-        );
-        return;
-      }
-
-      /*
-       * Create the first application.
-       */
-      const { data: newApplication, error } =
+      const { data: existingApplication, error: existingError } =
         await supabase
           .from("applications")
-          .insert({
-            job_id: jobId,
-            candidate_id: user.id,
-            status: "applied",
-          })
           .select(
             `
               id,
@@ -471,80 +307,78 @@ export default function CandidateJobDetailsPage() {
               status,
               applied_at,
               updated_at
-            `
+            `,
           )
-          .single();
+          .eq("job_id", routeJobId)
+          .eq("candidate_id", user.id)
+          .maybeSingle();
 
-      if (error) {
-        throw error;
+      if (existingError) throw existingError;
+
+      if (existingApplication) {
+        if (existingApplication.status === "withdrawn") {
+          await handleReapplyInternal(existingApplication.id);
+        } else {
+          setApplication(existingApplication as Application);
+        }
+        return;
       }
 
-      setApplication(
-        newApplication as Application
-      );
-    } catch (err: any) {
+      const { data: newApplication, error: insertError } = await supabase
+        .from("applications")
+        .insert({
+          job_id: routeJobId,
+          candidate_id: user.id,
+          status: "applied",
+        })
+        .select(
+          `
+            id,
+            job_id,
+            candidate_id,
+            status,
+            applied_at,
+            updated_at
+          `,
+        )
+        .single();
+
+      if (insertError) throw insertError;
+
+      setApplication(newApplication as Application);
+    } catch (err: unknown) {
       console.error(err);
 
       setError(
-        err?.message ||
-          "Unable to submit your application."
+        err instanceof Error
+          ? err.message
+          : "Unable to submit your application.",
       );
     } finally {
       setActionLoading(false);
     }
   }
 
-  /*
-   * ----------------------------------------------------
-   * REAPPLY INTERNAL
-   * ----------------------------------------------------
-   *
-   * Same application row.
-   *
-   * withdrawn
-   *     ↓
-   * applied
-   */
-  async function handleReapplyInternal(
-    applicationId: string
-  ) {
-    const { data, error } = await supabase
-      .from("applications")
-      .update({
-        status: "applied",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", applicationId)
-      .select(
-        `
-          id,
-          job_id,
-          candidate_id,
-          status,
-          applied_at,
-          updated_at
-        `
-      )
-      .single();
+  async function handleReapplyInternal(applicationId: string) {
+    const { data, error: rpcError } = await supabase.rpc(
+      "candidate_change_application_status",
+      {
+        p_application_id: applicationId,
+        p_new_status: "applied",
+      },
+    );
 
-    if (error) {
-      throw error;
+    if (rpcError) throw rpcError;
+
+    if (!data) {
+      throw new Error("The application could not be updated.");
     }
 
     setApplication(data as Application);
   }
 
-  /*
-   * ----------------------------------------------------
-   * REAPPLY
-   * ----------------------------------------------------
-   */
   async function handleReapply() {
-    if (!application) {
-      return;
-    }
-
-    if (application.status !== "withdrawn") {
+    if (!application || application.status !== "withdrawn") {
       return;
     }
 
@@ -552,40 +386,23 @@ export default function CandidateJobDetailsPage() {
     setError("");
 
     try {
-      await handleReapplyInternal(
-        application.id
-      );
-    } catch (err: any) {
+      await handleReapplyInternal(application.id);
+    } catch (err: unknown) {
       console.error(err);
 
       setError(
-        err?.message ||
-          "Unable to reapply for this job."
+        err instanceof Error
+          ? err.message
+          : "Unable to reapply for this job.",
       );
     } finally {
       setActionLoading(false);
     }
   }
 
-  /*
-   * ----------------------------------------------------
-   * WITHDRAW
-   * ----------------------------------------------------
-   *
-   * We keep the same application row.
-   *
-   * applied
-   *     ↓
-   * withdrawn
-   */
   async function handleWithdraw() {
-    if (!application) {
-      return;
-    }
+    if (!application) return;
 
-    /*
-     * Prevent withdrawing a withdrawn application.
-     */
     if (
       application.status === "withdrawn" ||
       application.status === "rejected" ||
@@ -595,60 +412,43 @@ export default function CandidateJobDetailsPage() {
     }
 
     const confirmed = window.confirm(
-      "Are you sure you want to withdraw your application? You will be able to reapply later."
+      "Are you sure you want to withdraw your application? You will be able to reapply later.",
     );
 
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     setActionLoading(true);
     setError("");
 
     try {
-      const { data, error } =
-        await supabase
-          .from("applications")
-          .update({
-            status: "withdrawn",
-            updated_at:
-              new Date().toISOString(),
-          })
-          .eq("id", application.id)
-          .select(
-            `
-              id,
-              job_id,
-              candidate_id,
-              status,
-              applied_at,
-              updated_at
-            `
-          )
-          .single();
+      const { data, error: rpcError } = await supabase.rpc(
+        "candidate_change_application_status",
+        {
+          p_application_id: application.id,
+          p_new_status: "withdrawn",
+        },
+      );
 
-      if (error) {
-        throw error;
+      if (rpcError) throw rpcError;
+
+      if (!data) {
+        throw new Error("The application could not be withdrawn.");
       }
 
       setApplication(data as Application);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
 
       setError(
-        err?.message ||
-          "Unable to withdraw your application."
+        err instanceof Error
+          ? err.message
+          : "Unable to withdraw your application.",
       );
     } finally {
       setActionLoading(false);
     }
   }
 
-  /*
-   * ----------------------------------------------------
-   * LOADING
-   * ----------------------------------------------------
-   */
   if (loading) {
     return (
       <main
@@ -661,17 +461,12 @@ export default function CandidateJobDetailsPage() {
         <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
           <div
             className={`h-10 w-32 animate-pulse rounded-xl ${
-              darkMode
-                ? "bg-white/10"
-                : "bg-slate-200"
+              darkMode ? "bg-white/10" : "bg-slate-200"
             }`}
           />
-
           <div
             className={`mt-6 h-[500px] animate-pulse rounded-3xl ${
-              darkMode
-                ? "bg-white/10"
-                : "bg-slate-200"
+              darkMode ? "bg-white/10" : "bg-slate-200"
             }`}
           />
         </div>
@@ -679,11 +474,6 @@ export default function CandidateJobDetailsPage() {
     );
   }
 
-  /*
-   * ----------------------------------------------------
-   * MISSING / INVALID JOB
-   * ----------------------------------------------------
-   */
   if (!job) {
     return (
       <main
@@ -698,15 +488,11 @@ export default function CandidateJobDetailsPage() {
             <XCircle size={30} />
           </div>
 
-          <h1 className="mt-5 text-2xl font-bold">
-            Job unavailable
-          </h1>
+          <h1 className="mt-5 text-2xl font-bold">Job unavailable</h1>
 
           <p
             className={`mt-2 text-sm ${
-              darkMode
-                ? "text-slate-400"
-                : "text-slate-500"
+              darkMode ? "text-slate-400" : "text-slate-500"
             }`}
           >
             {error || "This job is unavailable."}
@@ -724,19 +510,8 @@ export default function CandidateJobDetailsPage() {
     );
   }
 
-  /*
-   * ----------------------------------------------------
-   * APPLICATION STATE
-   * ----------------------------------------------------
-   *
-   * These values are calculated from the actual
-   * application row retrieved from Supabase.
-   */
-  const isWithdrawn =
-    application?.status === "withdrawn";
-
-  const hasApplication =
-    application !== null;
+  const isWithdrawn = application?.status === "withdrawn";
+  const hasApplication = application !== null;
 
   const canWithdraw =
     hasApplication &&
@@ -752,7 +527,6 @@ export default function CandidateJobDetailsPage() {
           : "bg-[#f6f9fc] text-slate-900"
       }`}
     >
-      {/* Theme */}
       <button
         type="button"
         onClick={() => setDarkMode((value) => !value)}
@@ -763,15 +537,10 @@ export default function CandidateJobDetailsPage() {
         }`}
         aria-label="Toggle theme"
       >
-        {darkMode ? (
-          <Sun size={18} />
-        ) : (
-          <Moon size={18} />
-        )}
+        {darkMode ? <Sun size={18} /> : <Moon size={18} />}
       </button>
 
       <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
-        {/* Back */}
         <Link
           href="/candidate/jobs"
           className={`inline-flex items-center gap-2 text-sm font-semibold ${
@@ -784,14 +553,12 @@ export default function CandidateJobDetailsPage() {
           Back to jobs
         </Link>
 
-        {/* Error */}
         {error && (
           <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-400">
             {error}
           </div>
         )}
 
-        {/* Job header */}
         <section
           className={`mt-6 rounded-3xl border p-6 shadow-sm sm:p-8 ${
             darkMode
@@ -803,9 +570,7 @@ export default function CandidateJobDetailsPage() {
             <div className="flex min-w-0 gap-4">
               <div
                 className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${
-                  darkMode
-                    ? "bg-white/10"
-                    : "bg-slate-100"
+                  darkMode ? "bg-white/10" : "bg-slate-100"
                 }`}
               >
                 <Building2 size={25} />
@@ -818,9 +583,7 @@ export default function CandidateJobDetailsPage() {
 
                 <p
                   className={`mt-1 text-sm ${
-                    darkMode
-                      ? "text-slate-400"
-                      : "text-slate-500"
+                    darkMode ? "text-slate-400" : "text-slate-500"
                   }`}
                 >
                   Recruitment Management System
@@ -828,39 +591,30 @@ export default function CandidateJobDetailsPage() {
               </div>
             </div>
 
-            {/* APPLICATION STATUS */}
             {application && (
               <span
                 className={`inline-flex shrink-0 items-center gap-1.5 self-start rounded-full px-3 py-1.5 text-xs font-bold ${getStatusClasses(
                   application.status,
-                  darkMode
+                  darkMode,
                 )}`}
               >
-                {application.status ===
-                "withdrawn" ? (
+                {application.status === "withdrawn" ? (
                   <XCircle size={14} />
-                ) : application.status ===
-                  "selected" ||
-                  application.status ===
-                    "hired" ? (
+                ) : application.status === "selected" ||
+                  application.status === "hired" ? (
                   <CheckCircle2 size={14} />
                 ) : (
                   <Clock3 size={14} />
                 )}
 
-                {getStatusLabel(
-                  application.status
-                )}
+                {getStatusLabel(application.status)}
               </span>
             )}
           </div>
 
-          {/* Metadata */}
           <div
             className={`mt-7 flex flex-wrap gap-x-6 gap-y-3 text-sm ${
-              darkMode
-                ? "text-slate-400"
-                : "text-slate-500"
+              darkMode ? "text-slate-400" : "text-slate-500"
             }`}
           >
             {job.location && (
@@ -872,16 +626,12 @@ export default function CandidateJobDetailsPage() {
 
             <div className="flex items-center gap-2">
               <BriefcaseBusiness size={16} />
-              {formatEmploymentType(
-                job.employment_type
-              )}
+              {formatEmploymentType(job.employment_type)}
             </div>
 
             <div className="flex items-center gap-2">
               <UserRound size={16} />
-              {formatExperience(
-                job.experience_level
-              )}
+              {formatExperience(job.experience_level)}
             </div>
 
             <div className="flex items-center gap-2">
@@ -890,62 +640,32 @@ export default function CandidateJobDetailsPage() {
             </div>
           </div>
 
-          {/* Salary / deadline */}
           <div className="mt-6 grid gap-3 sm:grid-cols-2">
             <div
               className={`rounded-2xl p-4 ${
-                darkMode
-                  ? "bg-white/[0.04]"
-                  : "bg-slate-50"
+                darkMode ? "bg-white/[0.04]" : "bg-slate-50"
               }`}
             >
-              <p
-                className={`text-xs ${
-                  darkMode
-                    ? "text-slate-500"
-                    : "text-slate-500"
-                }`}
-              >
-                Salary
-              </p>
-
+              <p className="text-xs text-slate-500">Salary</p>
               <p className="mt-1 text-sm font-bold">
-                {formatSalary(
-                  job.salary_min,
-                  job.salary_max
-                )}
+                {formatSalary(job.salary_min, job.salary_max)}
               </p>
             </div>
 
             <div
               className={`rounded-2xl p-4 ${
-                darkMode
-                  ? "bg-white/[0.04]"
-                  : "bg-slate-50"
+                darkMode ? "bg-white/[0.04]" : "bg-slate-50"
               }`}
             >
-              <p
-                className={`text-xs ${
-                  darkMode
-                    ? "text-slate-500"
-                    : "text-slate-500"
-                }`}
-              >
-                Application deadline
-              </p>
-
+              <p className="text-xs text-slate-500">Application deadline</p>
               <p className="mt-1 text-sm font-bold">
-                {formatDate(
-                  job.application_deadline
-                )}
+                {formatDate(job.application_deadline)}
               </p>
             </div>
           </div>
         </section>
 
-        {/* Main content */}
         <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-          {/* Description */}
           <section
             className={`rounded-3xl border p-6 shadow-sm sm:p-8 ${
               darkMode
@@ -955,24 +675,18 @@ export default function CandidateJobDetailsPage() {
           >
             <div className="flex items-center gap-2">
               <FileText size={19} />
-
-              <h2 className="text-lg font-bold">
-                Job description
-              </h2>
+              <h2 className="text-lg font-bold">Job description</h2>
             </div>
 
             <div
               className={`mt-5 whitespace-pre-wrap text-sm leading-7 ${
-                darkMode
-                  ? "text-slate-300"
-                  : "text-slate-600"
+                darkMode ? "text-slate-300" : "text-slate-600"
               }`}
             >
               {job.description}
             </div>
           </section>
 
-          {/* Application panel */}
           <aside
             className={`h-fit rounded-3xl border p-5 shadow-sm sm:p-6 lg:sticky lg:top-6 ${
               darkMode
@@ -980,24 +694,18 @@ export default function CandidateJobDetailsPage() {
                 : "border-slate-200 bg-white"
             }`}
           >
-            <h2 className="font-bold">
-              Your application
-            </h2>
+            <h2 className="font-bold">Your application</h2>
 
             {profile && (
               <div className="mt-4">
                 <p className="text-sm font-semibold">
-                  {profile.full_name ||
-                    profile.email ||
-                    "Candidate"}
+                  {profile.full_name || profile.email || "Candidate"}
                 </p>
 
                 {profile.email && (
                   <p
                     className={`mt-1 text-xs ${
-                      darkMode
-                        ? "text-slate-400"
-                        : "text-slate-500"
+                      darkMode ? "text-slate-400" : "text-slate-500"
                     }`}
                   >
                     {profile.email}
@@ -1006,16 +714,11 @@ export default function CandidateJobDetailsPage() {
               </div>
             )}
 
-            {/* -----------------------------------------
-                NO APPLICATION
-            ------------------------------------------ */}
             {!application && (
               <>
                 <div
                   className={`mt-5 rounded-2xl p-4 ${
-                    darkMode
-                      ? "bg-white/[0.04]"
-                      : "bg-slate-50"
+                    darkMode ? "bg-white/[0.04]" : "bg-slate-50"
                   }`}
                 >
                   <div className="flex gap-3">
@@ -1023,16 +726,12 @@ export default function CandidateJobDetailsPage() {
                       size={18}
                       className="mt-0.5 shrink-0 text-cyan-600"
                     />
-
                     <p
                       className={`text-xs leading-5 ${
-                        darkMode
-                          ? "text-slate-400"
-                          : "text-slate-600"
+                        darkMode ? "text-slate-400" : "text-slate-600"
                       }`}
                     >
-                      You have not applied for this
-                      position yet.
+                      You have not applied for this position yet.
                     </p>
                   </div>
                 </div>
@@ -1044,33 +743,26 @@ export default function CandidateJobDetailsPage() {
                   className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 text-sm font-bold text-white shadow-lg transition hover:-translate-y-0.5 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-200"
                 >
                   <Send size={17} />
-
-                  {actionLoading
-                    ? "Applying..."
-                    : "Apply now"}
+                  {actionLoading ? "Applying..." : "Apply now"}
                 </button>
               </>
             )}
 
-            {/* -----------------------------------------
-                WITHDRAWN
-            ------------------------------------------ */}
             {isWithdrawn && (
               <>
                 <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-400/20 dark:bg-red-400/10">
                   <div className="flex gap-3">
-                    <XCircle className="mt-0.5 shrink-0 text-red-600 dark:text-red-400" size={19} />
-
+                    <XCircle
+                      className="mt-0.5 shrink-0 text-red-600 dark:text-red-400"
+                      size={19}
+                    />
                     <div>
                       <p className="text-sm font-bold text-red-700 dark:text-red-400">
                         Application withdrawn
                       </p>
-
                       <p className="mt-1 text-xs leading-5 text-red-600/80 dark:text-red-400/80">
-                        You withdrew your application
-                        for this position. You can
-                        reapply if you want to be
-                        considered again.
+                        You withdrew your application for this position. You
+                        can reapply if you want to be considered again.
                       </p>
                     </div>
                   </div>
@@ -1083,28 +775,19 @@ export default function CandidateJobDetailsPage() {
                   className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 text-sm font-bold text-white shadow-lg transition hover:-translate-y-0.5 hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Send size={17} />
-
-                  {actionLoading
-                    ? "Reapplying..."
-                    : "Reapply"}
+                  {actionLoading ? "Reapplying..." : "Reapply"}
                 </button>
               </>
             )}
 
-            {/* -----------------------------------------
-                ACTIVE APPLICATION
-            ------------------------------------------ */}
             {application &&
               !isWithdrawn &&
-              application.status !==
-                "rejected" &&
+              application.status !== "rejected" &&
               application.status !== "hired" && (
                 <>
                   <div
                     className={`mt-5 rounded-2xl p-4 ${
-                      darkMode
-                        ? "bg-emerald-400/10"
-                        : "bg-emerald-50"
+                      darkMode ? "bg-emerald-400/10" : "bg-emerald-50"
                     }`}
                   >
                     <div className="flex gap-3">
@@ -1112,12 +795,10 @@ export default function CandidateJobDetailsPage() {
                         size={19}
                         className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"
                       />
-
                       <div>
                         <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400">
                           Application submitted
                         </p>
-
                         <p
                           className={`mt-1 text-xs leading-5 ${
                             darkMode
@@ -1125,12 +806,8 @@ export default function CandidateJobDetailsPage() {
                               : "text-emerald-700/70"
                           }`}
                         >
-                          Your application is
-                          currently{" "}
-                          {getStatusLabel(
-                            application.status
-                          ).toLowerCase()}
-                          .
+                          Your application is currently {" "}
+                          {getStatusLabel(application.status).toLowerCase()}.
                         </p>
                       </div>
                     </div>
@@ -1148,7 +825,6 @@ export default function CandidateJobDetailsPage() {
                       }`}
                     >
                       <XCircle size={16} />
-
                       {actionLoading
                         ? "Processing..."
                         : "Withdraw application"}
@@ -1157,52 +833,38 @@ export default function CandidateJobDetailsPage() {
                 </>
               )}
 
-            {/* -----------------------------------------
-                REJECTED
-            ------------------------------------------ */}
-            {application?.status ===
-              "rejected" && (
+            {application?.status === "rejected" && (
               <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-400/20 dark:bg-red-400/10">
                 <div className="flex gap-3">
                   <XCircle
                     size={19}
                     className="mt-0.5 shrink-0 text-red-600 dark:text-red-400"
                   />
-
                   <div>
                     <p className="text-sm font-bold text-red-700 dark:text-red-400">
                       Application rejected
                     </p>
-
                     <p className="mt-1 text-xs leading-5 text-red-600/80 dark:text-red-400/80">
-                      Your application for this
-                      position has been rejected.
+                      Your application for this position has been rejected.
                     </p>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* -----------------------------------------
-                HIRED
-            ------------------------------------------ */}
-            {application?.status ===
-              "hired" && (
+            {application?.status === "hired" && (
               <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-400/20 dark:bg-emerald-400/10">
                 <div className="flex gap-3">
                   <CheckCircle2
                     size={19}
                     className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400"
                   />
-
                   <div>
                     <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400">
                       Hired
                     </p>
-
                     <p className="mt-1 text-xs leading-5 text-emerald-700/70 dark:text-emerald-400/70">
-                      Congratulations! You have
-                      been hired for this position.
+                      Congratulations! You have been hired for this position.
                     </p>
                   </div>
                 </div>
